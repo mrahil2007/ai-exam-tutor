@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
 function App() {
@@ -10,6 +10,17 @@ function App() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
+
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, loading]);
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -28,12 +39,10 @@ function App() {
 
       const data = await res.json();
 
-      const aiMessage = {
-        role: "assistant",
-        content: data.answer || "⚠️ No response from AI"
-      };
-
-      setMessages((prev) => [...prev, aiMessage]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.answer }
+      ]);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -45,8 +54,16 @@ function App() {
   };
 
   return (
-    <div className="chat-container">
-      <div className="chat-header">🎓 AI Exam Tutor</div>
+    <div className={`chat-container ${darkMode ? "dark" : "light"}`}>
+      <div className="chat-header">
+        🎓 AI Exam Tutor
+        <button
+          className="theme-toggle"
+          onClick={() => setDarkMode(!darkMode)}
+        >
+          {darkMode ? "🌞" : "🌙"}
+        </button>
+      </div>
 
       <div className="chat-messages">
         {messages.map((msg, i) => (
@@ -54,7 +71,12 @@ function App() {
             {msg.content}
           </div>
         ))}
-        {loading && <div className="message assistant">Typing…</div>}
+
+        {loading && (
+          <div className="message assistant">Typing…</div>
+        )}
+
+        <div ref={messagesEndRef} />
       </div>
 
       <div className="chat-input">
@@ -62,7 +84,12 @@ function App() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask your question..."
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              sendMessage();
+            }
+          }}
         />
         <button onClick={sendMessage}>Send</button>
       </div>
