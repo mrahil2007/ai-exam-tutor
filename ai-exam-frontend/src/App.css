@@ -147,3 +147,44 @@ body {
 .chat-input button:hover {
   background: #0e8f6e;
 }
+/* Exam selector */
+.exam-select {
+  appearance: none;
+  padding: 6px 28px 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background-color: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+/* Dropdown arrow */
+.exam-select {
+  background-image: url("data:image/svg+xml;utf8,<svg fill='gray' height='20' viewBox='0 0 24 24' width='20' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+/* Hover & focus */
+.exam-select:hover {
+  border-color: #0ea5e9;
+}
+
+.exam-select:focus {
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 2px rgba(14,165,233,0.2);
+}
+
+/* Dark mode */
+.dark .exam-select {
+  background-color: #1f2933;
+  color: #f9fafb;
+  border-color: #374151;
+}
+
+.dark .exam-select:hover,
+.dark .exam-select:focus {
+  border-color: #38bdf8;
+}

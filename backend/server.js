@@ -15,6 +15,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const { question, exam } = req.body;
+const answer = await askAI(question, exam);
+
 
 app.get("/", (req, res) => {
   res.send("✅ Backend root working");
