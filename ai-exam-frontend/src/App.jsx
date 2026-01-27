@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
-const typeText = (text, setMessages) => {
-  let index = 0;
+/* 🔤 Word-by-word typing */
+const typeText = (text, setMessages, setLoading) => {
   const words = text.split(" ");
+  let index = 0;
 
   const interval = setInterval(() => {
     setMessages((prev) => {
@@ -17,8 +18,12 @@ const typeText = (text, setMessages) => {
     });
 
     index++;
-    if (index >= words.length) clearInterval(interval);
-  }, 80);
+
+    if (index >= words.length) {
+      clearInterval(interval);
+      setLoading(false); // ✅ STOP loading ONLY after typing ends
+    }
+  }, 70);
 };
 
 function App() {
@@ -35,13 +40,10 @@ function App() {
 
   const messagesEndRef = useRef(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  /* 🔽 Auto scroll */
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -50,8 +52,10 @@ function App() {
     setInput("");
     setLoading(true);
 
+    // User message
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
 
+    // Empty assistant message (for typing)
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
@@ -60,16 +64,18 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: userText,
-          exam: exam,
+          exam,
         }),
       });
 
       const data = await res.json();
 
       const answer =
-        data?.answer || "⚠️ No response from AI. Please try again.";
+        typeof data.answer === "string" && data.answer.trim()
+          ? data.answer
+          : "⚠️ No response from AI. Please try again.";
 
-      typeText(answer, setMessages);
+      typeText(answer, setMessages, setLoading);
     } catch (err) {
       setMessages((prev) => [
         ...prev.slice(0, -1),
@@ -79,13 +85,13 @@ function App() {
             "⚠️ Server is waking up (free hosting). Please try again in a few seconds.",
         },
       ]);
-    } finally {
       setLoading(false);
     }
   };
 
   return (
     <div className={`chat-container ${darkMode ? "dark" : "light"}`}>
+      {/* HEADER */}
       <div className="chat-header">
         <span>🎓 AI Exam Tutor</span>
 
@@ -114,22 +120,26 @@ function App() {
         </div>
       </div>
 
+      {/* CHAT */}
       <div className="chat-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`message ${msg.role}`}>
             {msg.content}
+            {loading && i === messages.length - 1 && msg.role === "assistant"
+              ? "▍"
+              : ""}
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
 
+      {/* FOOTER */}
       <footer className="chat-footer">
-        <span>
-          ⚡ Powered by AI • 📧 Contact:{" "}
-          <a href="mailto:mrahil2007@gmail.com">mrahil2007@gmail.com</a>
-        </span>
+        ⚡ Powered by AI • 📧{" "}
+        <a href="mailto:mrahil2007@gmail.com">mrahil2007@gmail.com</a>
       </footer>
 
+      {/* INPUT */}
       <div className="chat-input">
         <textarea
           value={input}
@@ -143,7 +153,7 @@ function App() {
           }}
         />
         <button onClick={sendMessage} disabled={loading}>
-          Send
+          {loading ? "Thinking…" : "Send"}
         </button>
       </div>
     </div>
