@@ -1,6 +1,27 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
+/* 🔥 Line-by-line typing effect */
+const typeText = (text, setMessages) => {
+  let index = 0;
+  const lines = text.split("\n");
+
+  const interval = setInterval(() => {
+    setMessages((prev) => {
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+
+      if (!last || last.role !== "assistant") return prev;
+
+      last.content += lines[index] + "\n";
+      return [...updated];
+    });
+
+    index++;
+    if (index >= lines.length) clearInterval(interval);
+  }, 150); // typing speed (ms)
+};
+
 function App() {
   const [messages, setMessages] = useState([
     {
@@ -15,48 +36,52 @@ function App() {
 
   const messagesEndRef = useRef(null);
 
-  // 🔥 Auto-scroll
+  /* 🔥 Auto-scroll */
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, loading]);
+  }, [messages]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
 
-    const userMessage = { role: "user", content: input };
-    setMessages((prev) => [...prev, userMessage]);
+    const userText = input;
     setInput("");
     setLoading(true);
+
+    // add user message
+    setMessages((prev) => [...prev, { role: "user", content: userText }]);
+
+    // add EMPTY assistant message (for typing)
+    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          question: input,
+          question: userText,
           exam: exam,
         }),
       });
 
       const data = await res.json();
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data?.answer || "⚠️ No response from AI",
-        },
-      ]);
+      const answer =
+        data?.answer || "⚠️ No response from AI. Please try again.";
+
+      // 🔥 typing effect instead of instant render
+      typeText(answer, setMessages);
     } catch (err) {
       setMessages((prev) => [
-        ...prev,
+        ...prev.slice(0, -1),
         {
           role: "assistant",
-          content: "❌ Unable to connect to server",
+          content:
+            "⚠️ Server is waking up (free hosting). Please try again in a few seconds.",
         },
       ]);
     } finally {
@@ -102,18 +127,18 @@ function App() {
             {msg.content}
           </div>
         ))}
-
-        {loading && <div className="message assistant">Thinking…</div>}
-
         <div ref={messagesEndRef} />
       </div>
 
+      {/* FOOTER */}
       <footer className="chat-footer">
         <span>
-          📧 Contact: <a href="mrahil2007@gmail.com">mrahil2007@gmail.com</a>
+          ⚡ Powered by AI • 📧 Contact:{" "}
+          <a href="mailto:mrahil2007@gmail.com">mrahil2007@gmail.com</a>
         </span>
       </footer>
 
+      {/* INPUT */}
       <div className="chat-input">
         <textarea
           value={input}
