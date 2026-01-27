@@ -206,7 +206,7 @@ body {
   text-decoration: underline;
 }
 
-/* Dark mode support */
+
 .dark .chat-footer {
   border-top: 1px solid #333;
 }
