@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
-/* 🔥 Line-by-line typing effect */
 const typeText = (text, setMessages) => {
   let index = 0;
-  const lines = text.split("\n");
+  const words = text.split(" ");
 
   const interval = setInterval(() => {
     setMessages((prev) => {
@@ -13,13 +12,13 @@ const typeText = (text, setMessages) => {
 
       if (!last || last.role !== "assistant") return prev;
 
-      last.content += lines[index] + "\n";
+      last.content += (index === 0 ? "" : " ") + words[index];
       return [...updated];
     });
 
     index++;
-    if (index >= lines.length) clearInterval(interval);
-  }, 150); // typing speed (ms)
+    if (index >= words.length) clearInterval(interval);
+  }, 80);
 };
 
 function App() {
@@ -36,7 +35,6 @@ function App() {
 
   const messagesEndRef = useRef(null);
 
-  /* 🔥 Auto-scroll */
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -52,10 +50,8 @@ function App() {
     setInput("");
     setLoading(true);
 
-    // add user message
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
 
-    // add EMPTY assistant message (for typing)
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
@@ -73,7 +69,6 @@ function App() {
       const answer =
         data?.answer || "⚠️ No response from AI. Please try again.";
 
-      // 🔥 typing effect instead of instant render
       typeText(answer, setMessages);
     } catch (err) {
       setMessages((prev) => [
@@ -91,7 +86,6 @@ function App() {
 
   return (
     <div className={`chat-container ${darkMode ? "dark" : "light"}`}>
-      {/* HEADER */}
       <div className="chat-header">
         <span>🎓 AI Exam Tutor</span>
 
@@ -120,7 +114,6 @@ function App() {
         </div>
       </div>
 
-      {/* CHAT MESSAGES */}
       <div className="chat-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`message ${msg.role}`}>
@@ -130,7 +123,6 @@ function App() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* FOOTER */}
       <footer className="chat-footer">
         <span>
           ⚡ Powered by AI • 📧 Contact:{" "}
@@ -138,7 +130,6 @@ function App() {
         </span>
       </footer>
 
-      {/* INPUT */}
       <div className="chat-input">
         <textarea
           value={input}
