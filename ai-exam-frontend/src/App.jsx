@@ -1,29 +1,42 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
-/* 🔤 Word-by-word typing */
-const typeText = (text, setMessages, setLoading) => {
+/* 🔤 Word-by-word typing with callback */
+const typeText = (text, setMessages, onDone) => {
+  if (!text || typeof text !== "string") {
+    onDone?.();
+    return;
+  }
+
   const words = text.split(" ");
   let index = 0;
 
   const interval = setInterval(() => {
     setMessages((prev) => {
       const updated = [...prev];
-      const last = updated[updated.length - 1];
+      const lastIndex = updated.length - 1;
 
-      if (!last || last.role !== "assistant") return prev;
+      if (lastIndex < 0 || updated[lastIndex].role !== "assistant") {
+        clearInterval(interval);
+        onDone?.();
+        return prev;
+      }
 
-      last.content += (index === 0 ? "" : " ") + words[index];
-      return [...updated];
+      updated[lastIndex] = {
+        ...updated[lastIndex],
+        content: words.slice(0, index + 1).join(" "),
+      };
+
+      return updated;
     });
 
     index++;
 
     if (index >= words.length) {
       clearInterval(interval);
-      setLoading(false); // ✅ STOP loading ONLY after typing ends
+      onDone?.(); // ✅ stop loading AFTER typing finishes
     }
-  }, 70);
+  }, 80);
 };
 
 function App() {
@@ -40,7 +53,7 @@ function App() {
 
   const messagesEndRef = useRef(null);
 
-  /* 🔽 Auto scroll */
+  /* 🔽 Auto-scroll */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -55,7 +68,7 @@ function App() {
     // User message
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
 
-    // Empty assistant message (for typing)
+    // Empty assistant bubble (for typing)
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
@@ -69,13 +82,15 @@ function App() {
       });
 
       const data = await res.json();
-
       const answer =
-        typeof data.answer === "string" && data.answer.trim()
-          ? data.answer
+        typeof data?.answer === "string" && data.answer.trim()
+          ? data.answer.trim()
           : "⚠️ No response from AI. Please try again.";
 
-      typeText(answer, setMessages, setLoading);
+      // 🔥 typing + stop loading correctly
+      typeText(answer, setMessages, () => {
+        setLoading(false);
+      });
     } catch (err) {
       setMessages((prev) => [
         ...prev.slice(0, -1),
@@ -126,7 +141,7 @@ function App() {
           <div key={i} className={`message ${msg.role}`}>
             {msg.content}
             {loading && i === messages.length - 1 && msg.role === "assistant"
-              ? "▍"
+              ? " ▍"
               : ""}
           </div>
         ))}
