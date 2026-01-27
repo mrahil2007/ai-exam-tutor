@@ -1,22 +1,11 @@
 import express from "express";
 import cors from "cors";
-
 import { askAI } from "./aiService.js";
-
-
-
-
-
-
-
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
-
-const { question, exam } = req.body;
-const answer = await askAI(question, exam);
 
 
 app.get("/", (req, res) => {
@@ -29,14 +18,14 @@ app.get("/test", (req, res) => {
 
 
 app.post("/chat", async (req, res) => {
-  const { question } = req.body;
+  const { question, exam } = req.body;
 
   if (!question) {
     return res.status(400).json({ error: "Question is required" });
   }
 
   try {
-    const answer = await askAI(question);
+    const answer = await askAI(question, exam);
     res.json({ answer });
   } catch (err) {
     console.error("AI error:", err.message);
@@ -47,8 +36,8 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-console.log("HF TOKEN LOADED:", process.env.HF_TOKEN?.slice(0, 10));
 
+console.log("HF TOKEN LOADED:", process.env.HF_TOKEN?.slice(0, 10));
 
 
 app.listen(5050, () => {

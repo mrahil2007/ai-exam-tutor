@@ -188,3 +188,29 @@ body {
 .dark .exam-select:focus {
   border-color: #38bdf8;
 }
+.chat-footer {
+  text-align: center;
+  padding: 8px;
+  font-size: 13px;
+  border-top: 1px solid #ddd;
+  background: inherit;
+}
+
+.chat-footer a {
+  color: #0e8f6e;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.chat-footer a:hover {
+  text-decoration: underline;
+}
+
+/* Dark mode support */
+.dark .chat-footer {
+  border-top: 1px solid #333;
+}
+
+.dark .chat-footer a {
+  color: #7fffd4;
+}

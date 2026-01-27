@@ -5,8 +5,8 @@ function App() {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: "Hi 👋 I’m your AI Exam Helper. Ask me anything!"
-    }
+      content: "Hi 👋 I’m your AI Exam Helper. Ask me anything!",
+    },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -38,8 +38,8 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: input,
-          exam: exam
-        })
+          exam: exam,
+        }),
       });
 
       const data = await res.json();
@@ -48,16 +48,16 @@ function App() {
         ...prev,
         {
           role: "assistant",
-          content: data?.answer || "⚠️ No response from AI"
-        }
+          content: data?.answer || "⚠️ No response from AI",
+        },
       ]);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "❌ Unable to connect to server"
-        }
+          content: "❌ Unable to connect to server",
+        },
       ]);
     } finally {
       setLoading(false);
@@ -71,12 +71,11 @@ function App() {
         <span>🎓 AI Exam Tutor</span>
 
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-        <select
-                className="exam-select"
-                    value={exam}
-                  onChange={(e) => setExam(e.target.value)}
-                >
-
+          <select
+            className="exam-select"
+            value={exam}
+            onChange={(e) => setExam(e.target.value)}
+          >
             <option>General</option>
             <option>UPSC</option>
             <option>JEE</option>
@@ -104,14 +103,17 @@ function App() {
           </div>
         ))}
 
-        {loading && (
-          <div className="message assistant">Thinking…</div>
-        )}
+        {loading && <div className="message assistant">Thinking…</div>}
 
         <div ref={messagesEndRef} />
       </div>
 
-      {/* INPUT */}
+      <footer className="chat-footer">
+        <span>
+          📧 Contact: <a href="mrahil2007@gmail.com">mrahil2007@gmail.com</a>
+        </span>
+      </footer>
+
       <div className="chat-input">
         <textarea
           value={input}
