@@ -9,6 +9,8 @@
 html,
 body {
   height: 100%;
+  overflow: hidden;
+  /* Android keyboard fix */
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, Helvetica, Arial, sans-serif;
   background: #f4f6fb;
@@ -16,25 +18,23 @@ body {
 
 /* 🎯 Main Container */
 .chat-container {
-  height: 100dvh;
-  /* mobile safe */
+  height: 100svh;
   display: flex;
   flex-direction: column;
   max-width: 420px;
-  /* Play Store preferred width */
   margin: auto;
   background: #ffffff;
 }
 
-/* 🌙 Dark Mode */
-.chat-container.dark {
-  background: #0f172a;
-  color: #e5e7eb;
+@supports (-webkit-touch-callout: none) {
+  .chat-container {
+    height: -webkit-fill-available;
+  }
 }
 
 /* 🔝 Header */
 .chat-header {
-  padding: 14px 16px;
+  padding: calc(14px + env(safe-area-inset-top)) 16px 14px;
   font-weight: 600;
   background: linear-gradient(135deg, #2563eb, #1e40af);
   color: #fff;
@@ -43,16 +43,15 @@ body {
   align-items: center;
 }
 
-/* 🎓 Exam Dropdown */
+/* 🎓 Exam Select */
 .exam-select {
   padding: 6px 10px;
   border-radius: 6px;
   border: none;
-  outline: none;
   font-size: 14px;
 }
 
-/* 🔊 Icon Buttons */
+/* 🔊 Header Toggle */
 .theme-toggle {
   background: rgba(255, 255, 255, 0.2);
   border: none;
@@ -62,7 +61,7 @@ body {
   cursor: pointer;
 }
 
-/* 💬 Messages Area */
+/* 💬 Messages */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -82,7 +81,6 @@ body {
   word-wrap: break-word;
 }
 
-/* 🙋 User */
 .message.user {
   align-self: flex-end;
   background: #2563eb;
@@ -90,7 +88,6 @@ body {
   border-bottom-right-radius: 4px;
 }
 
-/* 🤖 Assistant */
 .message.assistant {
   align-self: flex-start;
   background: #e5e7eb;
@@ -98,35 +95,32 @@ body {
   border-bottom-left-radius: 4px;
 }
 
-.chat-container.dark .message.assistant {
-  background: #1f2933;
-  color: #e5e7eb;
-}
-
-/* ✍️ Input Area */
+/* ✍️ INPUT BAR — EXACTLY LIKE YOUR SCREENSHOT */
 .chat-input {
-  padding: 10px;
-  border-top: 1px solid #e5e7eb;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  background: #fff;
-}
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
 
-.chat-container.dark .chat-input {
-  background: #020617;
-  border-color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 10px;
+  background: #ffffff;
+  border-top: 1px solid #e5e7eb;
 }
 
 /* 📝 Textarea */
 .chat-input textarea {
   flex: 1;
-  min-height: 42px;
+  min-height: 44px;
   max-height: 120px;
   resize: none;
-  padding: 10px;
-  border-radius: 10px;
+
+  padding: 10px 12px;
+  border-radius: 12px;
   border: 1px solid #cbd5f5;
+
   font-size: 16px;
   /* iOS zoom fix */
   outline: none;
@@ -134,45 +128,67 @@ body {
 
 /* 📷 Image Upload Button */
 .image-upload {
-  background: #e5e7eb;
-  padding: 10px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 16px;
-}
+  width: 44px;
+  height: 44px;
 
-.chat-container.dark .image-upload {
-  background: #1e293b;
-  color: #e5e7eb;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #60a5fa, #3b82f6);
+  color: #fff;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  cursor: pointer;
+  font-size: 18px;
+  flex-shrink: 0;
+
+  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3);
 }
 
 /* 🎤 & Send Buttons */
 .chat-input button {
-  padding: 10px 14px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+
   border-radius: 10px;
   border: none;
-  background: #2563eb;
+
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
   color: white;
+
   font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  min-width: 56px;
+  flex-shrink: 0;
+
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Button press */
+.chat-input button:active,
+.image-upload:active {
+  transform: scale(0.95);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
 }
 
 .chat-input button:disabled {
   opacity: 0.6;
+  box-shadow: none;
 }
 
-/* 📱 Mobile Tweaks */
-@media (max-width: 600px) {
-  .chat-container {
-    max-width: 100%;
-  }
-
-  .message {
-    font-size: 14px;
-  }
-
-  .chat-header {
+/* 📱 Small devices safety */
+@media (max-width: 360px) {
+  .chat-input textarea {
     font-size: 15px;
+  }
+
+  .chat-input button,
+  .image-upload {
+    height: 40px;
+    min-width: 40px;
+    font-size: 16px;
   }
 }
