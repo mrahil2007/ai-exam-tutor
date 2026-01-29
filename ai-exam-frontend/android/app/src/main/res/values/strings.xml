@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Exam AI</string>
+    <string name="title_activity_main">Exam AI</string>
+    <string name="package_name">jeanix.in</string>
+    <string name="custom_url_scheme">jeanix.in</string>
+</resources>

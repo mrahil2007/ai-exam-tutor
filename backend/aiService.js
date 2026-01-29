@@ -39,7 +39,7 @@ ${question}
       "Authorization": `Bearer ${process.env.HF_TOKEN}`
     },
     body: JSON.stringify({
-      model: "meta-llama/Meta-Llama-3-8B-Instruct",
+      model: "mistralai/Mixtral-8x7B-Instruct-v0.1",
       messages: [
         {
           role: "system",
@@ -51,7 +51,8 @@ ${question}
         }
       ],
       temperature: 0.7,
-      max_tokens: 1200
+      top_p: 0.9,
+      max_tokens: 700
     })
   });
 

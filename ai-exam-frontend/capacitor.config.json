@@ -1,0 +1,9 @@
+{
+  "appId": "jeanix.in",
+  "appName": "Exam AI",
+  "webDir": "dist",
+  "server": {
+    "url": "https://ai-exam-tutor-ten.vercel.app",
+    "cleartext": true
+}
+}

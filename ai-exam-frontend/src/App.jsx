@@ -1,8 +1,45 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
-/* 🔤 Word-by-word typing with callback */
-const typeText = (text, setMessages, onDone) => {
+/* 🎙 Speech → Text */
+const startListening = (setInput) => {
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    alert("Speech recognition not supported in this browser.");
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "en-IN";
+  recognition.interimResults = false;
+  recognition.start();
+
+  recognition.onresult = (event) => {
+    setInput(event.results[0][0].transcript);
+  };
+
+  recognition.onerror = () => recognition.stop();
+};
+
+/* 🔊 Text → Speech */
+const speakText = (text, voiceEnabledRef) => {
+  if (!voiceEnabledRef.current) return;
+  if (!text || typeof text !== "string") return;
+
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-IN";
+  utterance.rate = 1;
+  utterance.pitch = 1;
+
+  window.speechSynthesis.speak(utterance);
+};
+
+/* 🔤 Word-by-word typing */
+const typeText = (text, setMessages, onDone, voiceEnabledRef) => {
   if (!text || typeof text !== "string") {
     onDone?.();
     return;
@@ -34,9 +71,10 @@ const typeText = (text, setMessages, onDone) => {
 
     if (index >= words.length) {
       clearInterval(interval);
-      onDone?.(); // ✅ stop loading AFTER typing finishes
+      speakText(text, voiceEnabledRef);
+      onDone?.();
     }
-  }, 80);
+  }, 70);
 };
 
 function App() {
@@ -50,55 +88,93 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [exam, setExam] = useState("General");
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+
+  const voiceEnabledRef = useRef(voiceEnabled);
+  useEffect(() => {
+    voiceEnabledRef.current = voiceEnabled;
+  }, [voiceEnabled]);
 
   const messagesEndRef = useRef(null);
-
-  /* 🔽 Auto-scroll */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  /* 💬 Send text question */
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
 
-    const userText = input;
-    setInput("");
+    window.speechSynthesis.cancel();
     setLoading(true);
 
-    // User message
-    setMessages((prev) => [...prev, { role: "user", content: userText }]);
+    const userText = input;
+    setInput("");
 
-    // Empty assistant bubble (for typing)
+    setMessages((prev) => [...prev, { role: "user", content: userText }]);
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: userText,
-          exam,
-        }),
+        body: JSON.stringify({ question: userText, exam }),
       });
 
       const data = await res.json();
       const answer =
         typeof data?.answer === "string" && data.answer.trim()
           ? data.answer.trim()
-          : "⚠️ No response from AI. Please try again.";
+          : "⚠️ No response from AI.";
 
-      // 🔥 typing + stop loading correctly
-      typeText(answer, setMessages, () => {
-        setLoading(false);
-      });
-    } catch (err) {
+      typeText(answer, setMessages, () => setLoading(false), voiceEnabledRef);
+    } catch {
       setMessages((prev) => [
         ...prev.slice(0, -1),
-        {
-          role: "assistant",
-          content:
-            "⚠️ Server is waking up (free hosting). Please try again in a few seconds.",
-        },
+        { role: "assistant", content: "⚠️ Server is waking up. Please wait." },
+      ]);
+      setLoading(false);
+    }
+  };
+
+  /* 🖼 Image upload + OCR */
+  const handleImageUpload = async (file) => {
+    if (!file || loading) return;
+
+    window.speechSynthesis.cancel();
+    setLoading(true);
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: "🖼 Reading image…" },
+    ]);
+
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append("exam", exam);
+
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/image`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      const answer =
+        typeof data?.answer === "string" && data.answer.trim()
+          ? data.answer.trim()
+          : "⚠️ Could not read image.";
+
+      // replace placeholder with empty assistant
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        { role: "assistant", content: "" },
+      ]);
+
+      typeText(answer, setMessages, () => setLoading(false), voiceEnabledRef);
+    } catch {
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        { role: "assistant", content: "❌ Image processing failed." },
       ]);
       setLoading(false);
     }
@@ -128,9 +204,15 @@ function App() {
 
           <button
             className="theme-toggle"
-            onClick={() => setDarkMode(!darkMode)}
+            onClick={() => {
+              setVoiceEnabled((prev) => {
+                if (prev) window.speechSynthesis.cancel();
+                return !prev;
+              });
+            }}
+            title="Toggle voice output"
           >
-            {darkMode ? "🌞" : "🌙"}
+            {voiceEnabled ? "🔊" : "🔇"}
           </button>
         </div>
       </div>
@@ -148,12 +230,6 @@ function App() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* FOOTER */}
-      <footer className="chat-footer">
-        ⚡ Powered by AI • 📧{" "}
-        <a href="mailto:mrahil2007@gmail.com">mrahil2007@gmail.com</a>
-      </footer>
-
       {/* INPUT */}
       <div className="chat-input">
         <textarea
@@ -167,6 +243,21 @@ function App() {
             }
           }}
         />
+
+        <label className="image-upload">
+          📷
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => handleImageUpload(e.target.files[0])}
+            hidden
+          />
+        </label>
+
+        <button onClick={() => startListening(setInput)} disabled={loading}>
+          🎤
+        </button>
+
         <button onClick={sendMessage} disabled={loading}>
           {loading ? "Thinking…" : "Send"}
         </button>
