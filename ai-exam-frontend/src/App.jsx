@@ -254,13 +254,9 @@ function App() {
           />
         </label>
 
-        <button onClick={() => startListening(setInput)} disabled={loading}>
-          🎤
-        </button>
+        <button onClick={() => startListening(setInput)}>🎤</button>
 
-        <button onClick={sendMessage} disabled={loading}>
-          {loading ? "Thinking…" : "Send"}
-        </button>
+        <button onClick={sendMessage}>{loading ? "Thinking…" : "Send"}</button>
       </div>
     </div>
   );

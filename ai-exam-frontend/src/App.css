@@ -144,6 +144,9 @@ body {
     font-size: 18px;
     cursor: pointer;
     flex-shrink: 0;
+    pointer-events: auto;
+      touch-action: manipulation;
+      z-index: 200;
 }
 
 /* 🎤 & Send Buttons */
