@@ -32,14 +32,14 @@ const startListening = (setInput) => {
 };
 
 /* 🔊 Text → Speech */
-const speakText = (text, voiceEnabledRef) => {
-  if (!voiceEnabledRef.current || !text) return;
+// const speakText = (text, voiceEnabledRef) => {
+//   if (!voiceEnabledRef.current || !text) return;
 
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-IN";
-  window.speechSynthesis.speak(utterance);
-};
+//   window.speechSynthesis.cancel();
+//   const utterance = new SpeechSynthesisUtterance(text);
+//   utterance.lang = "en-IN";
+//   window.speechSynthesis.speak(utterance);
+// };
 
 /* 🔤 Word-by-word typing */
 const typeText = (text, setMessages, onDone, voiceEnabledRef) => {
@@ -220,7 +220,7 @@ function App() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="chat-input">
+      <form className="chat-input">
         <button
           type="button"
           className="image-upload"
@@ -245,7 +245,8 @@ function App() {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              sendMessage();
+              e.stopPropagation();
+              setTimeout(() => sendMessage(), 0);
             }
           }}
         />
@@ -259,14 +260,10 @@ function App() {
           🎤
         </button>
 
-        <button
-          type="button"
-          onClick={sendMessage}
-          disabled={loading || !input.trim()}
-        >
-          {loading ? "..." : "Send"}
+        <button type="submit" disabled={loading || !input.trim()}>
+          {loading ? "Thinking…" : "Send"}
         </button>
-      </div>
+      </form>
     </div>
   );
 }
