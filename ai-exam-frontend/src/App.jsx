@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
+import ReactMarkdown from "react-markdown";
 
 /* 🔤 Word-by-word typing with callback */
 const typeText = (text, setMessages, onDone) => {
@@ -139,7 +140,8 @@ function App() {
       <div className="chat-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`message ${msg.role}`}>
-            {msg.content}
+            <ReactMarkdown>{msg.content}</ReactMarkdown>
+
             {loading && i === messages.length - 1 && msg.role === "assistant"
               ? " ▍"
               : ""}

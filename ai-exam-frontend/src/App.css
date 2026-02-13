@@ -226,3 +226,11 @@ body {
   box-shadow: 0 4px 10px rgba(37, 211, 102, 0.35);
   cursor: pointer;
 }
+
+.message ul {
+  padding-left: 18px;
+}
+
+.message strong {
+  font-weight: 600;
+}
