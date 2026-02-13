@@ -18,6 +18,10 @@ app.get("/test", (req, res) => {
   res.send("✅ GET /test working");
 });
 
+app.get("/health", (req, res) => {
+  res.send("Server alive");
+});
+
 
 app.post("/chat", async (req, res) => {
   const { question, exam } = req.body;
