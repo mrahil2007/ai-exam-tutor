@@ -35,7 +35,7 @@ Rules:
         ],
         temperature: 0.2,
         top_p: 0.8,
-        max_tokens: 250,
+        max_tokens: 512,
       }),
     });
 
