@@ -1,67 +1,63 @@
 import fetch from "node-fetch";
 
-const HF_API_URL = "https://router.huggingface.co/v1/chat/completions";
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export async function askAI(question, exam = "General") {
-  const prompt = `
-You are an expert competitive exam tutor.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
-Target Exam: ${exam}
+  try {
+    const response = await fetch(GROQ_API_URL, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          {
+            role: "system",
+            content: `You are a ${exam} exam tutor.
+Rules:
+- Answer in 3-5 bullet points MAX
+- Each bullet = 1 sentence only
+- Always write a complete, finished answer
+- Never stop mid-sentence
+- If MCQ: give correct option + 1 line reason only
+- No greetings, no filler text, go straight to the answer`,
+          },
+          {
+            role: "user",
+            content: question,
+          },
+        ],
+        temperature: 0.2,
+        top_p: 0.8,
+        max_tokens: 250,
+      }),
+    });
 
-You help students prepare for ALL competitive exams such as:
-UPSC, JEE, NEET, SSC, Banking, GATE, CAT, State PSC, Defence exams.
+    clearTimeout(timeout);
 
-Guidelines:
-- Adapt your explanation specifically for the target exam
-- Use simple, clear language
-- Use headings and bullet points when helpful
-- For theory exams (UPSC/SSC): be conceptual and structured
-- For technical exams (JEE/NEET/GATE): explain step-by-step
-- Do NOT cut the answer midway
-- End with a short summary if the topic is long
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Groq API error: ${errorText}`);
+    }
 
-Tutor Behaviour (VERY IMPORTANT):
-- After answering, ALWAYS ask the student about their WEAKNESSES
-- Identify likely weak areas related to this topic
-- Ask 1–2 diagnostic follow-up questions to find gaps in understanding
-- Suggest practical ways to FIX those weaknesses
-  (e.g. revision method, practice type, PYQs, MCQs, numericals)
-- Encourage the student and guide the next step in preparation
+    const data = await response.json();
 
-Question:
-${question}
-`;
+    if (!data.choices?.[0]?.message?.content) {
+      throw new Error("Invalid AI response");
+    }
 
-  const response = await fetch(HF_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.HF_TOKEN}`
-    },
-    body: JSON.stringify({
-      model: "meta-llama/Meta-Llama-3-8B-Instruct",
-      messages: [
-        {
-          role: "system",
-          content: "You are a helpful and accurate competitive exam tutor."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      temperature: 0.7,
-      top_p: 0.9,
-      max_tokens: 700
-    })
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText);
+    return data.choices[0].message.content;
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err.name === "AbortError") {
+      throw new Error("Request timed out. Please try again.");
+    }
+    throw err;
   }
-
-  const data = await response.json();
-
-  return data.choices[0].message.content;
 }
