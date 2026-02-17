@@ -48,7 +48,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [exam, setExam] = useState("General");
   const [showExamMenu, setShowExamMenu] = useState(false);
-  const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -148,24 +147,22 @@ export default function App() {
   return (
     <div
       style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        height: viewportHeight + "px",
+        minHeight: "100dvh",
+        width: "100%",
         display: "flex",
         flexDirection: "column",
         background: "#212121",
         color: "#ececec",
         fontFamily: "'Figtree', system-ui, -apple-system, sans-serif",
-        overflow: "hidden",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
       }}
       onClick={() => setShowExamMenu(false)}
     >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-        html, body { overflow: hidden; overscroll-behavior: none; background: #212121; }
+        html, body { overflow: 100%; overscroll-behavior: none; background: #212121; }
         textarea { font-family: 'Figtree', system-ui, sans-serif !important; font-size: 16px !important; }
         .msg-content p { margin-bottom: 10px; line-height: 1.75; }
         .msg-content p:last-child { margin-bottom: 0; }
@@ -535,7 +532,8 @@ export default function App() {
       <div
         style={{
           flexShrink: 0,
-          padding: "8px 12px 10px",
+          padding: "8px 12px",
+          paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
           background: "#212121",
           borderTop: isEmpty ? "none" : "1px solid #2a2a2a",
         }}
