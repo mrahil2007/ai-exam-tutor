@@ -15,49 +15,48 @@ export async function askAI(question, exam = "General") {
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model: "deepseek-r1-distill-llama-70b",
         messages: [
           {
             role: "system",
-            content: `You are a ${exam} exam tutor.
-Rules:
-- Answer in 3-5 bullet points MAX
-- Each bullet = 1 sentence only
-- Always write a complete, finished answer
-- Never stop mid-sentence
-- If MCQ: give correct option + 1 line reason only
-- No greetings, no filler text, go straight to the answer`,
+            content: `You are an expert ${exam} exam tutor. 
+- Give clear, accurate, and complete answers
+- For theory/concepts: explain with examples if needed
+- For MCQs: state correct option + short reason
+- For math/numerical: show step-by-step solution
+- Be concise but never sacrifice correctness
+- No greetings or filler text`,
           },
-          {
-            role: "user",
-            content: question,
-          },
+          { role: "user", content: question },
         ],
-        temperature: 0.2,
-        top_p: 0.8,
-        max_tokens: 512,
+        temperature: 0.6,
+        top_p: 0.9, // ✅ Fix 1: changed from 0.8 to 0.9 for DeepSeek
+        max_tokens: 1024,
       }),
     });
 
-    clearTimeout(timeout);
-
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Groq API error: ${errorText}`);
+      throw new Error(`Groq API error ${response.status}: ${errorText}`); // ✅ Fix 2: added status code
     }
 
     const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
 
-    if (!data.choices?.[0]?.message?.content) {
-      throw new Error("Invalid AI response");
+    if (!content?.trim()) {
+      throw new Error("Invalid or empty AI response");
     }
 
-    return data.choices[0].message.content;
+    // ✅ Fix 3: strip DeepSeek's internal thinking tags
+    const cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+    return cleaned;
   } catch (err) {
-    clearTimeout(timeout);
     if (err.name === "AbortError") {
       throw new Error("Request timed out. Please try again.");
     }
     throw err;
+  } finally {
+    clearTimeout(timeout);
   }
 }
