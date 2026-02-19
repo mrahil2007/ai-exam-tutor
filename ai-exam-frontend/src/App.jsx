@@ -48,25 +48,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [exam, setExam] = useState("General");
   const [showExamMenu, setShowExamMenu] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
-
-  // Android keyboard viewport fix
-  useEffect(() => {
-    const handleViewport = () => {
-      const h = window.visualViewport?.height || window.innerHeight;
-      setViewportHeight(h);
-    };
-    window.visualViewport?.addEventListener("resize", handleViewport);
-    window.visualViewport?.addEventListener("scroll", handleViewport);
-    window.addEventListener("resize", handleViewport);
-    return () => {
-      window.visualViewport?.removeEventListener("resize", handleViewport);
-      window.visualViewport?.removeEventListener("scroll", handleViewport);
-      window.removeEventListener("resize", handleViewport);
-    };
-  }, []);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const pdfInputRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -111,12 +99,13 @@ export default function App() {
     }
   };
 
-  const handleImageUpload = async (file) => {
+  const handleFileUpload = async (file) => {
     if (!file || loading) return;
     setLoading(true);
+    const isPdf = file.type === "application/pdf";
     setMessages((p) => [
       ...p,
-      { role: "user", content: "📷 Image sent" },
+      { role: "user", content: isPdf ? "📄 PDF sent" : "📷 Image sent" },
       { role: "assistant", content: "" },
     ]);
     try {
@@ -131,12 +120,12 @@ export default function App() {
       const answer =
         typeof data?.answer === "string" && data.answer.trim()
           ? data.answer.trim()
-          : "⚠️ Could not process image.";
+          : "⚠️ Could not process file.";
       typeText(answer, setMessages, () => setLoading(false));
     } catch {
       setMessages((p) => [
         ...p.slice(0, -1),
-        { role: "assistant", content: "⚠️ Image processing failed." },
+        { role: "assistant", content: "⚠️ File processing failed." },
       ]);
       setLoading(false);
     }
@@ -157,7 +146,10 @@ export default function App() {
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
       }}
-      onClick={() => setShowExamMenu(false)}
+      onClick={() => {
+        setShowExamMenu(false);
+        setShowAttachMenu(false);
+      }}
     >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap');
@@ -182,6 +174,7 @@ export default function App() {
           0%, 60%, 100% { transform: translateY(0); }
           30% { transform: translateY(-5px); }
         }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         .dot1 { animation: dotPulse 1s ease-in-out infinite; }
         .dot2 { animation: dotPulse 1s ease-in-out 0.15s infinite; }
         .dot3 { animation: dotPulse 1s ease-in-out 0.3s infinite; }
@@ -189,6 +182,8 @@ export default function App() {
         .exam-opt:active { background: #3a3a3a !important; }
         .send-btn:active { transform: scale(0.9); }
         .img-btn:active { opacity: 0.5; }
+        .attach-opt:hover { background: #333 !important; }
+        .attach-opt:active { background: #3a3a3a !important; }
       `}</style>
 
       {/* ── HEADER ── */}
@@ -225,7 +220,6 @@ export default function App() {
           </span>
         </div>
 
-        {/* Exam selector */}
         <div
           style={{ position: "relative" }}
           onClick={(e) => e.stopPropagation()}
@@ -314,7 +308,6 @@ export default function App() {
           flexDirection: "column",
         }}
       >
-        {/* Empty state */}
         {isEmpty ? (
           <div
             style={{
@@ -454,7 +447,6 @@ export default function App() {
                     >
                       🎓
                     </div>
-
                     <div style={{ flex: 1, minWidth: 0, paddingTop: "2px" }}>
                       {msg.content === "" && loading ? (
                         <div
@@ -549,9 +541,13 @@ export default function App() {
             padding: "6px 6px 6px 12px",
           }}
         >
-          {/* Image upload */}
-          <label
+          {/* Attach button */}
+          <button
             className="img-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowAttachMenu(true);
+            }}
             style={{
               width: 34,
               height: 34,
@@ -563,6 +559,8 @@ export default function App() {
               color: "#666",
               flexShrink: 0,
               marginBottom: "1px",
+              background: "transparent",
+              border: "none",
               transition: "opacity 0.15s",
             }}
           >
@@ -580,21 +578,47 @@ export default function App() {
               <circle cx="8.5" cy="8.5" r="1.5" />
               <polyline points="21 15 16 10 5 21" />
             </svg>
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              hidden
-              onChange={(e) => handleImageUpload(e.target.files[0])}
-            />
-          </label>
+          </button>
+
+          {/* Hidden inputs */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              handleFileUpload(e.target.files[0]);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={(e) => {
+              handleFileUpload(e.target.files[0]);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={pdfInputRef}
+            type="file"
+            accept="application/pdf"
+            hidden
+            onChange={(e) => {
+              handleFileUpload(e.target.files[0]);
+              e.target.value = "";
+            }}
+          />
 
           {/* Textarea */}
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={`Message ExamAI...`}
+            placeholder="Message ExamAI..."
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -677,6 +701,144 @@ export default function App() {
           ExamAI can make mistakes. Verify important info.
         </div>
       </div>
+
+      {/* ── BOTTOM SHEET ── */}
+      {showAttachMenu && (
+        <div
+          onClick={() => setShowAttachMenu(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 200,
+            background: "rgba(0,0,0,0.5)",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              background: "#2a2a2a",
+              borderRadius: "18px 18px 0 0",
+              padding: "12px 0 calc(20px + env(safe-area-inset-bottom))",
+              animation: "slideUp 0.2s ease",
+            }}
+          >
+            <div
+              style={{
+                width: 36,
+                height: 4,
+                background: "#444",
+                borderRadius: 2,
+                margin: "0 auto 16px",
+              }}
+            />
+
+            {[
+              {
+                label: "Take a Photo",
+                ref: cameraInputRef,
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#ececec"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                    <circle cx="12" cy="13" r="4" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Choose from Gallery",
+                ref: fileInputRef,
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#ececec"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <polyline points="21 15 16 10 5 21" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Upload PDF",
+                ref: pdfInputRef,
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#ececec"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                  </svg>
+                ),
+              },
+            ].map(({ label, ref, icon }) => (
+              <button
+                key={label}
+                className="attach-opt"
+                onClick={() => {
+                  ref.current.click();
+                  setShowAttachMenu(false);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "16px",
+                  width: "100%",
+                  padding: "14px 24px",
+                  background: "transparent",
+                  border: "none",
+                  color: "#ececec",
+                  fontSize: "0.95rem",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontFamily: "'Figtree', sans-serif",
+                }}
+              >
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: "10px",
+                    background: "#3a3a3a",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {icon}
+                </div>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
