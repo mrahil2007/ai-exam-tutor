@@ -5,7 +5,7 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import Tesseract from "tesseract.js";
-import { askAI } from "./aiService.js";
+import { askAI, askAIWithImage } from "./aiService.js";
 
 const app = express();
 app.use(cors());
@@ -40,28 +40,23 @@ app.post("/chat", async (req, res) => {
 
 app.post("/image", upload.single("image"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "Image required" });
-    }
+    if (!req.file) return res.status(400).json({ error: "Image required" });
 
     const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
     if (!allowedTypes.includes(req.file.mimetype)) {
       return res.status(400).json({ error: "Only JPEG/PNG/WEBP allowed" });
     }
 
-    const {
-      data: { text },
-    } = await Tesseract.recognize(req.file.buffer, "eng");
-
-    if (!text || !text.trim()) {
-      return res.json({ answer: "⚠️ Could not detect text in image." });
-    }
-
-    const answer = await askAI(text, req.body.exam);
+    // Gemini directly reads the image — no OCR needed!
+    const answer = await askAIWithImage(
+      req.file.buffer,
+      req.file.mimetype,
+      req.body.exam
+    );
     res.json({ answer });
   } catch (err) {
-    console.error("OCR error:", err.message);
-    res.status(500).json({ error: "Image processing failed" });
+    console.error("Image error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
