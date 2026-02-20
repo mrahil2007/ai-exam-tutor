@@ -73,7 +73,8 @@ export default function App() {
     }
   }, [input]);
 
-  const sendMessageWithText = async (text) => {
+  // ✅ withVoice = true only when mic is used
+  const sendMessageWithText = async (text, withVoice = false) => {
     if (!text.trim() || loading) return;
     setInput("");
     setLoading(true);
@@ -95,7 +96,7 @@ export default function App() {
           : "⚠️ No response. Please try again.";
       typeText(answer, setMessages, () => {
         setLoading(false);
-        speakText(answer);
+        if (withVoice) speakText(answer); // 🔊 only for voice input
       });
     } catch {
       setMessages((p) => [
@@ -106,11 +107,13 @@ export default function App() {
     }
   };
 
+  // ✅ Text input — no voice reply
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
-    await sendMessageWithText(input.trim());
+    await sendMessageWithText(input.trim(), false);
   };
 
+  // ✅ File upload — no voice reply
   const handleFileUpload = async (file) => {
     if (!file || loading) return;
     setLoading(true);
@@ -135,7 +138,7 @@ export default function App() {
           : "⚠️ Could not process file.";
       typeText(answer, setMessages, () => {
         setLoading(false);
-        speakText(answer);
+        // ❌ no voice for file uploads
       });
     } catch {
       setMessages((p) => [
@@ -188,6 +191,7 @@ export default function App() {
     setIsSpeaking(false);
   };
 
+  // ✅ Voice input — reply with text + voice
   const startListening = () => {
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -204,7 +208,7 @@ export default function App() {
     recognition.onresult = (e) => {
       const transcript = e.results[0][0].transcript;
       setInput(transcript);
-      setTimeout(() => sendMessageWithText(transcript), 300);
+      setTimeout(() => sendMessageWithText(transcript, true), 300); // ✅ withVoice = true
     };
     recognition.onerror = () => setIsListening(false);
     recognition.start();
@@ -758,7 +762,7 @@ export default function App() {
             </svg>
           </button>
 
-          {/* Stop voice button */}
+          {/* Stop voice button — only shows while speaking */}
           {isSpeaking && (
             <button
               onClick={stopSpeaking}
