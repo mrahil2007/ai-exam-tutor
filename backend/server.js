@@ -6,12 +6,14 @@ import cors from "cors";
 import multer from "multer";
 import { extractText } from "unpdf";
 import { askAI, askAIWithImage } from "./aiService.js";
+import Groq from "groq-sdk";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const upload = multer();
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 if (!process.env.GROQ_API_KEY) {
   console.error("❌ GROQ_API_KEY missing!");
@@ -84,6 +86,45 @@ app.post("/image", upload.single("image"), async (req, res) => {
   } catch (err) {
     console.error("File error:", err.message);
     res.status(500).json({ error: "File processing failed" });
+  }
+});
+
+// TTS endpoint
+app.post("/speak", async (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: "Text required" });
+
+  try {
+    const response = await groq.audio.speech.create({
+      model: "canopylabs/orpheus-v1-english",
+      voice: "hannah", // most natural female voice
+      input: text.slice(0, 200), // 200 char limit per request
+      response_format: "wav",
+    });
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.set("Content-Type", "audio/wav");
+    res.send(buffer);
+  } catch (err) {
+    console.error("TTS error:", err.message);
+    res.status(500).json({ error: "Voice generation failed" });
+  }
+});
+
+// Speech to text endpoint
+app.post("/transcribe", upload.single("audio"), async (req, res) => {
+  try {
+    const transcription = await groq.audio.transcriptions.create({
+      file: new File([req.file.buffer], "audio.webm", {
+        type: req.file.mimetype,
+      }),
+      model: "whisper-large-v3-turbo",
+      language: "en",
+    });
+    res.json({ text: transcription.text });
+  } catch (err) {
+    console.error("Transcription error:", err.message);
+    res.status(500).json({ error: "Transcription failed" });
   }
 });
 

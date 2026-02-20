@@ -41,20 +41,25 @@ const EXAMS = [
   "GATE",
   "CAT",
 ];
+const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
 
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [exam, setExam] = useState("General");
+  const [voice, setVoice] = useState("hannah");
   const [showExamMenu, setShowExamMenu] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const audioRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -68,28 +73,30 @@ export default function App() {
     }
   }, [input]);
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
-    const userText = input.trim();
+  const sendMessageWithText = async (text) => {
+    if (!text.trim() || loading) return;
     setInput("");
     setLoading(true);
     setMessages((p) => [
       ...p,
-      { role: "user", content: userText },
+      { role: "user", content: text },
       { role: "assistant", content: "" },
     ]);
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: userText, exam }),
+        body: JSON.stringify({ question: text, exam }),
       });
       const data = await res.json();
       const answer =
         typeof data?.answer === "string" && data.answer.trim()
           ? data.answer.trim()
           : "⚠️ No response. Please try again.";
-      typeText(answer, setMessages, () => setLoading(false));
+      typeText(answer, setMessages, () => {
+        setLoading(false);
+        speakText(answer);
+      });
     } catch {
       setMessages((p) => [
         ...p.slice(0, -1),
@@ -97,6 +104,11 @@ export default function App() {
       ]);
       setLoading(false);
     }
+  };
+
+  const sendMessage = async () => {
+    if (!input.trim() || loading) return;
+    await sendMessageWithText(input.trim());
   };
 
   const handleFileUpload = async (file) => {
@@ -121,7 +133,10 @@ export default function App() {
         typeof data?.answer === "string" && data.answer.trim()
           ? data.answer.trim()
           : "⚠️ Could not process file.";
-      typeText(answer, setMessages, () => setLoading(false));
+      typeText(answer, setMessages, () => {
+        setLoading(false);
+        speakText(answer);
+      });
     } catch {
       setMessages((p) => [
         ...p.slice(0, -1),
@@ -129,6 +144,70 @@ export default function App() {
       ]);
       setLoading(false);
     }
+  };
+
+  const speakText = async (text) => {
+    try {
+      const chunks = text.match(/.{1,200}(?:\s|$)/g) || [text];
+      setIsSpeaking(true);
+      for (const chunk of chunks) {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/speak`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: chunk, voice }),
+        });
+        if (!res.ok) {
+          console.error("TTS failed:", await res.text());
+          setIsSpeaking(false);
+          return;
+        }
+        const audioBlob = await res.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+        await new Promise((resolve) => {
+          audio.onended = resolve;
+          audio.onerror = resolve;
+          audio.play();
+        });
+      }
+    } catch (err) {
+      console.error("TTS error:", err);
+    } finally {
+      setIsSpeaking(false);
+      audioRef.current = null;
+    }
+  };
+
+  const stopSpeaking = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setIsSpeaking(false);
+  };
+
+  const startListening = () => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Voice input not supported on this browser.");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-IN";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      setInput(transcript);
+      setTimeout(() => sendMessageWithText(transcript), 300);
+    };
+    recognition.onerror = () => setIsListening(false);
+    recognition.start();
   };
 
   const isEmpty = messages.length === 0;
@@ -175,6 +254,7 @@ export default function App() {
           30% { transform: translateY(-5px); }
         }
         @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
         .dot1 { animation: dotPulse 1s ease-in-out infinite; }
         .dot2 { animation: dotPulse 1s ease-in-out 0.15s infinite; }
         .dot3 { animation: dotPulse 1s ease-in-out 0.3s infinite; }
@@ -184,6 +264,8 @@ export default function App() {
         .img-btn:active { opacity: 0.5; }
         .attach-opt:hover { background: #333 !important; }
         .attach-opt:active { background: #3a3a3a !important; }
+        .mic-btn-active { animation: pulse 0.8s ease-in-out infinite; }
+        select option { background: #2a2a2a; color: #ececec; }
       `}</style>
 
       {/* ── HEADER ── */}
@@ -221,15 +303,14 @@ export default function App() {
         </div>
 
         <div
-          style={{ position: "relative" }}
+          style={{ display: "flex", alignItems: "center", gap: "8px" }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            onClick={() => setShowExamMenu(!showExamMenu)}
+          {/* Voice selector */}
+          <select
+            value={voice}
+            onChange={(e) => setVoice(e.target.value)}
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "5px",
               background: "#2a2a2a",
               border: "1px solid #3a3a3a",
               borderRadius: "8px",
@@ -238,62 +319,90 @@ export default function App() {
               fontSize: "0.82rem",
               fontWeight: 500,
               cursor: "pointer",
+              textTransform: "capitalize",
+              outline: "none",
             }}
           >
-            {exam}
-            <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
-              <path
-                d="M1 1L5 5L9 1"
-                stroke="#888"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+            {VOICES.map((v) => (
+              <option key={v} value={v} style={{ textTransform: "capitalize" }}>
+                {v}
+              </option>
+            ))}
+          </select>
 
-          {showExamMenu && (
-            <div
+          {/* Exam selector */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowExamMenu(!showExamMenu)}
               style={{
-                position: "absolute",
-                top: "calc(100% + 6px)",
-                right: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
                 background: "#2a2a2a",
                 border: "1px solid #3a3a3a",
-                borderRadius: "10px",
-                padding: "4px",
-                zIndex: 100,
-                minWidth: "110px",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
-                animation: "fadeIn 0.12s ease",
+                borderRadius: "8px",
+                padding: "6px 11px",
+                color: "#ececec",
+                fontSize: "0.82rem",
+                fontWeight: 500,
+                cursor: "pointer",
               }}
             >
-              {EXAMS.map((e) => (
-                <button
-                  key={e}
-                  className="exam-opt"
-                  onClick={() => {
-                    setExam(e);
-                    setShowExamMenu(false);
-                  }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "9px 12px",
-                    borderRadius: "7px",
-                    background: exam === e ? "#10a37f20" : "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    color: exam === e ? "#10a37f" : "#ddd",
-                    fontSize: "0.85rem",
-                    fontWeight: exam === e ? 600 : 400,
-                  }}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          )}
+              {exam}
+              <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
+                <path
+                  d="M1 1L5 5L9 1"
+                  stroke="#888"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+
+            {showExamMenu && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 6px)",
+                  right: 0,
+                  background: "#2a2a2a",
+                  border: "1px solid #3a3a3a",
+                  borderRadius: "10px",
+                  padding: "4px",
+                  zIndex: 100,
+                  minWidth: "110px",
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+                  animation: "fadeIn 0.12s ease",
+                }}
+              >
+                {EXAMS.map((e) => (
+                  <button
+                    key={e}
+                    className="exam-opt"
+                    onClick={() => {
+                      setExam(e);
+                      setShowExamMenu(false);
+                    }}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "9px 12px",
+                      borderRadius: "7px",
+                      background: exam === e ? "#10a37f20" : "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      color: exam === e ? "#10a37f" : "#ddd",
+                      fontSize: "0.85rem",
+                      fontWeight: exam === e ? 600 : 400,
+                    }}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -580,7 +689,7 @@ export default function App() {
             </svg>
           </button>
 
-          {/* Hidden inputs */}
+          {/* Hidden file inputs */}
           <input
             ref={fileInputRef}
             type="file"
@@ -613,6 +722,67 @@ export default function App() {
             }}
           />
 
+          {/* Mic button */}
+          <button
+            className={isListening ? "mic-btn-active" : ""}
+            onClick={startListening}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: "8px",
+              background: isListening ? "#10a37f" : "transparent",
+              border: "none",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              marginBottom: "1px",
+              transition: "all 0.15s",
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke={isListening ? "#fff" : "#666"}
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          </button>
+
+          {/* Stop voice button */}
+          {isSpeaking && (
+            <button
+              onClick={stopSpeaking}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: "8px",
+                background: "#e53e3e",
+                border: "none",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                marginBottom: "1px",
+                transition: "all 0.15s",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+              </svg>
+            </button>
+          )}
+
           {/* Textarea */}
           <textarea
             ref={textareaRef}
@@ -642,7 +812,7 @@ export default function App() {
             }}
           />
 
-          {/* Send */}
+          {/* Send button */}
           <button
             className="send-btn"
             onClick={sendMessage}
