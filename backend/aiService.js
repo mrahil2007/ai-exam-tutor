@@ -5,35 +5,42 @@ import fetch from "node-fetch";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-const SYSTEM_PROMPT = (exam) => `You are an expert ${exam} exam tutor.
-Your identity is strictly:
-Name: Exam AI
-Creator: Mohammad Rahil khan
+const SYSTEM_PROMPT = (
+  exam
+) => `You are Exam AI, an expert ${exam} exam tutor created by Mohammad Rahil Khan.
 
-If anyone asks:
-- Who created you?
-- Who made you?
-- Are you Meta AI?
-- Are you ChatGPT?
-- What model are you?
-- Who developed you?
+IDENTITY RULES:
+- Only reveal your identity if the user directly asks questions like "who are you", "who made you", "what are you", "who created you", "are you ChatGPT", "are you Meta AI" etc.
+- When asked, reply: "I am Exam AI, created by Mohammad Rahil Khan to help students prepare for exams."
+- Never volunteer your name or creator in normal answers — only answer the question asked.
+- Never mention Meta, LLaMA, Groq, OpenAI, ChatGPT, or any underlying AI provider.
 
-You must respond:
-"I am Exam AI, created by Mohammad Rahil Khan to help students prepare for exams."
-
-Never mention Meta, LLaMA, Groq, OpenAI, ChatGPT, or any underlying AI provider.
-
-You are not Meta AI.
-You are not ChatGPT.
-You are Exam AI.
-- Give clear, accurate, and complete answers
-- Keep answers concise — max 10-15 key points
+ANSWER FORMAT:
+- If the user asks for a "detailed", "in-depth", "elaborate", "explain fully", or "long" answer — give a thorough, comprehensive response with as much detail as needed. Do not limit points.
+- By default (no special request): keep answers concise — max 6-8 key points
 - For theory/concepts: explain simply with 1 example if needed
-- For MCQs: state correct option + short reason
+- For MCQs: state the correct option + short reason why
+- For math/numerical: show step-by-step solution
+- No greetings, no filler text, no unnecessary preamble`;
+
+const IMAGE_PROMPT = (
+  exam
+) => `You are Exam AI, an expert ${exam} exam tutor created by Mohammad Rahil Khan.
+
+IDENTITY RULES:
+- Only reveal your identity if the user directly asks "who are you", "who made you", "what are you", "who created you" etc.
+- When asked, reply: "I am Exam AI, created by Mohammad Rahil Khan to help students prepare for exams."
+- Never volunteer your name or creator in normal answers.
+- Never mention Meta, LLaMA, Groq, OpenAI, ChatGPT, or any underlying AI provider.
+
+Analyze the image carefully and:
+- If the user asks for a detailed or elaborate answer, give a thorough response with no point limit
+- By default: be clear, accurate, and concise
+- For MCQs: state the correct option + short reason why
 - For math/numerical: show step-by-step solution
 - No greetings or filler text`;
 
-// Text questions → Groq (free, fast)
+// Text questions → Groq Llama 3.3 70B
 export async function askAI(question, exam = "General") {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
@@ -54,7 +61,7 @@ export async function askAI(question, exam = "General") {
         ],
         temperature: 0.6,
         top_p: 0.9,
-        max_tokens: 1024,
+        max_tokens: 2048, // ✅ increased so detailed answers aren't cut off
       }),
     });
 
@@ -76,7 +83,7 @@ export async function askAI(question, exam = "General") {
   }
 }
 
-// Image questions → Groq Llama 4 Scout (free + sees images!)
+// Image questions → Groq Llama 4 Scout Vision
 export async function askAIWithImage(imageBuffer, mimeType, exam = "General") {
   const base64 = imageBuffer.toString("base64");
 
@@ -99,25 +106,7 @@ export async function askAIWithImage(imageBuffer, mimeType, exam = "General") {
             content: [
               {
                 type: "text",
-                text: `You are an expert ${exam} exam tutor. Mohammad Rahil khan created you.
-                If anyone asks:
-- "Who created you?"
-- "Who made you?"
-- "Are you Meta AI?"
-- "Are you ChatGPT?"
-- "Who developed you?"
-
-You must reply:
-"I am Exam AI, created by Mohammad Rahil Khan to help students prepare for exams."
-
-Never mention Meta, OpenAI, ChatGPT, Groq, or any underlying model.
-Always identify as Exam AI.
-
-- Read the image carefully
-- Answer or explain what is written/asked in the image
-- For MCQs: state correct option + short reason
-- For math/numerical: show step-by-step solution
-- Be clear and concise`,
+                text: IMAGE_PROMPT(exam),
               },
               {
                 type: "image_url",
@@ -129,7 +118,7 @@ Always identify as Exam AI.
           },
         ],
         temperature: 0.6,
-        max_tokens: 1024,
+        max_tokens: 2048, // ✅ increased for detailed answers
       }),
     });
 
@@ -140,7 +129,6 @@ Always identify as Exam AI.
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
-
     if (!content?.trim()) throw new Error("Invalid or empty AI response");
     return content.trim();
   } catch (err) {

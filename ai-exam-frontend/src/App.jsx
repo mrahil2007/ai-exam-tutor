@@ -60,6 +60,13 @@ export default function App() {
   const cameraInputRef = useRef(null);
   const pdfInputRef = useRef(null);
   const audioRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const voiceRef = useRef(voice); // ✅ fix stale closure for voice
+
+  // ✅ Keep voiceRef in sync with voice state
+  useEffect(() => {
+    voiceRef.current = voice;
+  }, [voice]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -149,6 +156,7 @@ export default function App() {
     }
   };
 
+  // ✅ Uses voiceRef.current to avoid stale closure
   const speakText = async (text) => {
     try {
       const chunks = text.match(/.{1,200}(?:\s|$)/g) || [text];
@@ -157,7 +165,7 @@ export default function App() {
         const res = await fetch(`${import.meta.env.VITE_API_URL}/speak`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: chunk, voice }),
+          body: JSON.stringify({ text: chunk, voice: voiceRef.current }), // ✅ always current voice
         });
         if (!res.ok) {
           console.error("TTS failed:", await res.text());
@@ -191,27 +199,61 @@ export default function App() {
     setIsSpeaking(false);
   };
 
-  // ✅ Voice input — reply with text + voice
-  const startListening = () => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Voice input not supported on this browser.");
-      return;
+  // ✅ Press and hold mic — uses Groq Whisper, works on all phones
+  const startListening = async () => {
+    try {
+      setIsListening(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const formData = new FormData();
+        formData.append("audio", blob, "audio.webm");
+        try {
+          const res = await fetch(
+            `${import.meta.env.VITE_API_URL}/transcribe`,
+            {
+              method: "POST",
+              body: formData,
+            }
+          );
+          const data = await res.json();
+          const transcript = data.text?.trim();
+          if (transcript) {
+            setInput(transcript);
+            setTimeout(() => sendMessageWithText(transcript, true), 300);
+          }
+        } catch (err) {
+          console.error("Transcription error:", err);
+        } finally {
+          setIsListening(false);
+        }
+      };
+
+      mediaRecorder.start();
+      mediaRecorderRef.current = mediaRecorder;
+    } catch (err) {
+      console.error("Mic error:", err);
+      setIsListening(false);
+      alert("Microphone access denied.");
     }
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-IN";
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setInput(transcript);
-      setTimeout(() => sendMessageWithText(transcript, true), 300); // ✅ withVoice = true
-    };
-    recognition.onerror = () => setIsListening(false);
-    recognition.start();
+  };
+
+  const stopListening = () => {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state === "recording"
+    ) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
   };
 
   const isEmpty = messages.length === 0;
@@ -643,15 +685,31 @@ export default function App() {
           borderTop: isEmpty ? "none" : "1px solid #2a2a2a",
         }}
       >
+        {/* Press and hold hint */}
+        {isListening && (
+          <div
+            style={{
+              textAlign: "center",
+              marginBottom: "6px",
+              fontSize: "0.75rem",
+              color: "#10a37f",
+              animation: "fadeIn 0.2s ease",
+            }}
+          >
+            🎤 Recording... release to send
+          </div>
+        )}
+
         <div
           style={{
             display: "flex",
             alignItems: "flex-end",
             gap: "6px",
             background: "#2a2a2a",
-            border: "1px solid #3a3a3a",
+            border: `1px solid ${isListening ? "#10a37f" : "#3a3a3a"}`,
             borderRadius: "14px",
             padding: "6px 6px 6px 12px",
+            transition: "border-color 0.2s",
           }}
         >
           {/* Attach button */}
@@ -726,10 +784,20 @@ export default function App() {
             }}
           />
 
-          {/* Mic button */}
+          {/* ✅ Press and hold mic button */}
           <button
             className={isListening ? "mic-btn-active" : ""}
-            onClick={startListening}
+            onMouseDown={startListening}
+            onMouseUp={stopListening}
+            onMouseLeave={stopListening}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              startListening();
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              stopListening();
+            }}
             style={{
               width: 34,
               height: 34,
@@ -743,6 +811,8 @@ export default function App() {
               flexShrink: 0,
               marginBottom: "1px",
               transition: "all 0.15s",
+              userSelect: "none",
+              WebkitUserSelect: "none",
             }}
           >
             <svg
@@ -792,7 +862,7 @@ export default function App() {
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Message ExamAI..."
+            placeholder={isListening ? "Listening..." : "Message ExamAI..."}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -872,7 +942,7 @@ export default function App() {
             color: "#444",
           }}
         >
-          ExamAI can make mistakes. Verify important info.
+          Hold mic to speak • ExamAI can make mistakes. Verify important info.
         </div>
       </div>
 
