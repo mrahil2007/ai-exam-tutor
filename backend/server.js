@@ -13,12 +13,13 @@ app.use(cors());
 app.use(express.json());
 
 const upload = multer();
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 if (!process.env.GROQ_API_KEY) {
   console.error("❌ GROQ_API_KEY missing!");
   process.exit(1);
 }
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // Routes
 app.get("/", (req, res) => res.send("✅ Backend running"));
@@ -26,11 +27,7 @@ app.get("/health", (req, res) => res.send("Server alive"));
 
 app.post("/chat", async (req, res) => {
   const { question, exam } = req.body;
-
-  if (!question) {
-    return res.status(400).json({ error: "Question is required" });
-  }
-
+  if (!question) return res.status(400).json({ error: "Question is required" });
   try {
     const answer = await askAI(question, exam);
     res.json({ answer });
@@ -54,29 +51,23 @@ app.post("/image", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "Only JPEG/PNG/WEBP/PDF allowed" });
     }
 
-    // PDF handling
     if (req.file.mimetype === "application/pdf") {
       try {
         const buffer = new Uint8Array(req.file.buffer);
         const { text } = await extractText(buffer, { mergePages: true });
-
         if (text?.trim()) {
-          // Text-based PDF ✅
           const answer = await askAI(text.slice(0, 3000), req.body.exam);
           return res.json({ answer });
         }
       } catch (e) {
         console.log("PDF text extraction failed:", e.message);
       }
-
-      // Scanned/image-based PDF ❌
       return res.json({
         answer:
           "⚠️ This appears to be a scanned PDF. Please use **Take a Photo** option instead — it works much better for scanned documents and handwritten notes.",
       });
     }
 
-    // Image → Groq vision
     const answer = await askAIWithImage(
       req.file.buffer,
       req.file.mimetype,
@@ -90,18 +81,18 @@ app.post("/image", upload.single("image"), async (req, res) => {
 });
 
 // TTS endpoint
+const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
 app.post("/speak", async (req, res) => {
-  const { text } = req.body;
+  const { text, voice } = req.body;
   if (!text) return res.status(400).json({ error: "Text required" });
-
+  const selectedVoice = VOICES.includes(voice) ? voice : "hannah";
   try {
     const response = await groq.audio.speech.create({
       model: "canopylabs/orpheus-v1-english",
-      voice: "hannah", // most natural female voice
-      input: text.slice(0, 200), // 200 char limit per request
+      voice: selectedVoice,
+      input: text.slice(0, 200),
       response_format: "wav",
     });
-
     const buffer = Buffer.from(await response.arrayBuffer());
     res.set("Content-Type", "audio/wav");
     res.send(buffer);
@@ -111,16 +102,32 @@ app.post("/speak", async (req, res) => {
   }
 });
 
-// Speech to text endpoint
+// ✅ Transcription endpoint — supports webm, mp4, ogg (Android + iOS + Desktop)
 app.post("/transcribe", upload.single("audio"), async (req, res) => {
   try {
+    if (!req.file) return res.status(400).json({ error: "Audio required" });
+
+    const mimeType = req.file.mimetype || "audio/webm";
+
+    // ✅ Pick correct extension based on mime type
+    const ext = mimeType.includes("mp4")
+      ? "mp4"
+      : mimeType.includes("ogg")
+      ? "ogg"
+      : mimeType.includes("wav")
+      ? "wav"
+      : mimeType.includes("m4a")
+      ? "m4a"
+      : "webm";
+
+    console.log(`Transcribing audio: ${mimeType} → audio.${ext}`);
+
     const transcription = await groq.audio.transcriptions.create({
-      file: new File([req.file.buffer], "audio.webm", {
-        type: req.file.mimetype,
-      }),
+      file: new File([req.file.buffer], `audio.${ext}`, { type: mimeType }),
       model: "whisper-large-v3-turbo",
       language: "en",
     });
+
     res.json({ text: transcription.text });
   } catch (err) {
     console.error("Transcription error:", err.message);

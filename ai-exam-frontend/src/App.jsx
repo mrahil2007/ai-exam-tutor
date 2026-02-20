@@ -61,17 +61,14 @@ export default function App() {
   const pdfInputRef = useRef(null);
   const audioRef = useRef(null);
   const mediaRecorderRef = useRef(null);
-  const voiceRef = useRef(voice); // ✅ fix stale closure for voice
+  const voiceRef = useRef(voice);
 
-  // ✅ Keep voiceRef in sync with voice state
   useEffect(() => {
     voiceRef.current = voice;
   }, [voice]);
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
-
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -80,7 +77,6 @@ export default function App() {
     }
   }, [input]);
 
-  // ✅ withVoice = true only when mic is used
   const sendMessageWithText = async (text, withVoice = false) => {
     if (!text.trim() || loading) return;
     setInput("");
@@ -103,7 +99,7 @@ export default function App() {
           : "⚠️ No response. Please try again.";
       typeText(answer, setMessages, () => {
         setLoading(false);
-        if (withVoice) speakText(answer); // 🔊 only for voice input
+        if (withVoice) speakText(answer);
       });
     } catch {
       setMessages((p) => [
@@ -114,13 +110,11 @@ export default function App() {
     }
   };
 
-  // ✅ Text input — no voice reply
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
     await sendMessageWithText(input.trim(), false);
   };
 
-  // ✅ File upload — no voice reply
   const handleFileUpload = async (file) => {
     if (!file || loading) return;
     setLoading(true);
@@ -145,7 +139,6 @@ export default function App() {
           : "⚠️ Could not process file.";
       typeText(answer, setMessages, () => {
         setLoading(false);
-        // ❌ no voice for file uploads
       });
     } catch {
       setMessages((p) => [
@@ -156,7 +149,6 @@ export default function App() {
     }
   };
 
-  // ✅ Uses voiceRef.current to avoid stale closure
   const speakText = async (text) => {
     try {
       const chunks = text.match(/.{1,200}(?:\s|$)/g) || [text];
@@ -165,7 +157,7 @@ export default function App() {
         const res = await fetch(`${import.meta.env.VITE_API_URL}/speak`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: chunk, voice: voiceRef.current }), // ✅ always current voice
+          body: JSON.stringify({ text: chunk, voice: voiceRef.current }),
         });
         if (!res.ok) {
           console.error("TTS failed:", await res.text());
@@ -199,23 +191,46 @@ export default function App() {
     setIsSpeaking(false);
   };
 
-  // ✅ Press and hold mic — uses Groq Whisper, works on all phones
+  // ✅ Cross-platform mic — works on Android, iOS Safari, Desktop
   const startListening = async () => {
     try {
       setIsListening(true);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      const chunks = [];
 
+      // ✅ Detect supported format: webm (Android/Desktop), mp4 (iOS), ogg fallback
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : MediaRecorder.isTypeSupported("audio/ogg")
+        ? "audio/ogg"
+        : null;
+
+      const mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      const chunks = [];
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.push(e.data);
       };
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunks, { type: "audio/webm" });
+
+        const actualType = mediaRecorder.mimeType || mimeType || "audio/webm";
+        const ext = actualType.includes("mp4")
+          ? "mp4"
+          : actualType.includes("ogg")
+          ? "ogg"
+          : "webm";
+
+        const blob = new Blob(chunks, { type: actualType });
         const formData = new FormData();
-        formData.append("audio", blob, "audio.webm");
+        formData.append("audio", blob, `audio.${ext}`);
+
         try {
           const res = await fetch(
             `${import.meta.env.VITE_API_URL}/transcribe`,
@@ -242,7 +257,9 @@ export default function App() {
     } catch (err) {
       console.error("Mic error:", err);
       setIsListening(false);
-      alert("Microphone access denied.");
+      alert(
+        "Microphone access denied. Please allow mic permission in your browser settings."
+      );
     }
   };
 
@@ -295,10 +312,7 @@ export default function App() {
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes dotPulse {
-          0%, 60%, 100% { transform: translateY(0); }
-          30% { transform: translateY(-5px); }
-        }
+        @keyframes dotPulse { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
         @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
         .dot1 { animation: dotPulse 1s ease-in-out infinite; }
@@ -352,7 +366,6 @@ export default function App() {
           style={{ display: "flex", alignItems: "center", gap: "8px" }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Voice selector */}
           <select
             value={voice}
             onChange={(e) => setVoice(e.target.value)}
@@ -376,7 +389,6 @@ export default function App() {
             ))}
           </select>
 
-          {/* Exam selector */}
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setShowExamMenu(!showExamMenu)}
@@ -404,7 +416,6 @@ export default function App() {
                 />
               </svg>
             </button>
-
             {showExamMenu && (
               <div
                 style={{
@@ -505,7 +516,6 @@ export default function App() {
                 Ask any {exam} question
               </div>
             </div>
-
             <div
               style={{
                 display: "flex",
@@ -685,7 +695,6 @@ export default function App() {
           borderTop: isEmpty ? "none" : "1px solid #2a2a2a",
         }}
       >
-        {/* Press and hold hint */}
         {isListening && (
           <div
             style={{
@@ -699,7 +708,6 @@ export default function App() {
             🎤 Recording... release to send
           </div>
         )}
-
         <div
           style={{
             display: "flex",
@@ -712,7 +720,7 @@ export default function App() {
             transition: "border-color 0.2s",
           }}
         >
-          {/* Attach button */}
+          {/* Attach */}
           <button
             className="img-btn"
             onClick={(e) => {
@@ -751,7 +759,6 @@ export default function App() {
             </svg>
           </button>
 
-          {/* Hidden file inputs */}
           <input
             ref={fileInputRef}
             type="file"
@@ -784,7 +791,7 @@ export default function App() {
             }}
           />
 
-          {/* ✅ Press and hold mic button */}
+          {/* ✅ Press and hold mic — cross platform */}
           <button
             className={isListening ? "mic-btn-active" : ""}
             onMouseDown={startListening}
@@ -832,7 +839,7 @@ export default function App() {
             </svg>
           </button>
 
-          {/* Stop voice button — only shows while speaking */}
+          {/* Stop voice */}
           {isSpeaking && (
             <button
               onClick={stopSpeaking}
@@ -886,7 +893,7 @@ export default function App() {
             }}
           />
 
-          {/* Send button */}
+          {/* Send */}
           <button
             className="send-btn"
             onClick={sendMessage}
@@ -933,7 +940,6 @@ export default function App() {
             )}
           </button>
         </div>
-
         <div
           style={{
             textAlign: "center",
@@ -979,7 +985,6 @@ export default function App() {
                 margin: "0 auto 16px",
               }}
             />
-
             {[
               {
                 label: "Take a Photo",
