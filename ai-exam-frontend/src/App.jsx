@@ -2610,36 +2610,6 @@ export default function App() {
             style={{ display: "flex", alignItems: "center", gap: 6 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => setScreen("quiz")}
-              style={{
-                padding: "5px 9px",
-                background: "#f59e0b15",
-                border: "1px solid #f59e0b30",
-                borderRadius: 7,
-                color: "#f59e0b",
-                fontSize: "0.72rem",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              🧠 Quiz
-            </button>
-            <button
-              onClick={() => setScreen("planner")}
-              style={{
-                padding: "5px 9px",
-                background: "#a78bfa15",
-                border: "1px solid #a78bfa30",
-                borderRadius: 7,
-                color: "#a78bfa",
-                fontSize: "0.72rem",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              📅 Planner
-            </button>
             <select
               value={voice}
               onChange={(e) => setVoice(e.target.value)}
