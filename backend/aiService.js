@@ -227,11 +227,17 @@ ${dynamicPrompt}`;
 
 // ============================================
 // 5. TEXT CHAT FUNCTION (Groq LLaMA 3.3 70B)
+// ✅ Now accepts history for context memory
 // ============================================
 
-export async function askAI(question, exam = "General") {
+export async function askAI(question, exam = "General", history = []) {
   const questionType = detectQuestionType(question);
   const systemPrompt = buildSystemPrompt(exam, questionType);
+
+  // ✅ Keep last 10 messages to stay within token limits
+  const recentHistory = history
+    .filter((m) => m.role && m.content && m.content.trim())
+    .slice(-10);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
@@ -248,6 +254,7 @@ export async function askAI(question, exam = "General") {
         model: "llama-3.3-70b-versatile",
         messages: [
           { role: "system", content: systemPrompt },
+          ...recentHistory, // ✅ inject conversation history
           { role: "user", content: question },
         ],
         temperature: 0.6,
