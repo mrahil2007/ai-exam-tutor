@@ -14,19 +14,21 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 🔥 Ask Android mic permission
+        // Ask Android mic permission
         ActivityCompat.requestPermissions(this,
                 new String[]{Manifest.permission.RECORD_AUDIO},
                 1);
 
-        // 🔥 Grant WebView mic permission automatically
-        getBridge().getWebView().setWebChromeClient(
+        // Grant WebView mic permission
+        getBridge().getWebView().post(() ->
+            getBridge().getWebView().setWebChromeClient(
                 new android.webkit.WebChromeClient() {
                     @Override
                     public void onPermissionRequest(final PermissionRequest request) {
-                        request.grant(request.getResources());
+                        runOnUiThread(() -> request.grant(request.getResources()));
                     }
                 }
+            )
         );
     }
 }
