@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 
+// ── TYPING ANIMATION ──────────────────────────────────────────────────────────
 const typeText = (text, setMessages, onDone) => {
   if (!text || typeof text !== "string") {
     onDone?.();
@@ -53,18 +54,532 @@ const EXAMS = [
 const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
 const USER_ID = getUserId();
 
-// ── QUESTION TYPE DETECTOR & RENDERER ────────────────────────────────────────
-
-// Detects if a question contains a pipe-separated table (new format from AI)
-const isPipeTable = (text) => text.includes(" | ") && /[A-D]\.\s/.test(text);
-
-// Detects old "List I / List II" inline text format
-const isMatchingQuestion = (text) => {
-  return /list[\s-]?i\b/i.test(text) && /list[\s-]?ii\b/i.test(text);
+const EXAM_META = {
+  General: { icon: "💬", color: "#10a37f", desc: "All subjects" },
+  UPSC: { icon: "🏛️", color: "#f59e0b", desc: "Civil Services" },
+  JEE: { icon: "⚡", color: "#3b82f6", desc: "Engineering" },
+  NEET: { icon: "🧬", color: "#ec4899", desc: "Medical" },
+  SSC: { icon: "📋", color: "#8b5cf6", desc: "Staff Selection" },
+  Banking: { icon: "🏦", color: "#06b6d4", desc: "Bank exams" },
+  GATE: { icon: "🔬", color: "#f97316", desc: "Tech & Science" },
+  CAT: { icon: "📊", color: "#ef4444", desc: "Management" },
 };
 
-// Parse pipe-separated table format:
-// "List I (heading) | List II (heading)\nA. item | 1. item\nB. item | 2. item"
+// ── SPLASH SCREEN ─────────────────────────────────────────────────────────────
+function SplashScreen({ onDone }) {
+  useEffect(() => {
+    const timer = setTimeout(onDone, 2200);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        background: "#0a0a0f",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'Figtree', sans-serif",
+      }}
+    >
+      <style>{`
+        @keyframes splashPulse { 0%,100%{transform:scale(1);filter:brightness(1)} 50%{transform:scale(1.12);filter:brightness(1.3)} }
+        @keyframes splashRing { 0%{transform:scale(0.6);opacity:0.8} 100%{transform:scale(2.2);opacity:0} }
+        @keyframes splashText { 0%{opacity:0;transform:translateY(16px)} 100%{opacity:1;transform:translateY(0)} }
+        @keyframes splashTagline { 0%{opacity:0;letter-spacing:6px} 100%{opacity:0.5;letter-spacing:2px} }
+        @keyframes splashBar { 0%{width:0%} 100%{width:100%} }
+        @keyframes splashFade { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+      `}</style>
+
+      {/* Background mesh */}
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+        <div
+          style={{
+            position: "absolute",
+            top: "20%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 400,
+            height: 400,
+            background:
+              "radial-gradient(circle, rgba(16,163,127,0.2) 0%, transparent 70%)",
+            filter: "blur(60px)",
+          }}
+        />
+      </div>
+
+      {/* Pulse rings */}
+      <div
+        style={{
+          position: "relative",
+          width: 120,
+          height: 120,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 28,
+        }}
+      >
+        {[0, 300, 600].map((delay) => (
+          <div
+            key={delay}
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: "50%",
+              border: "2px solid rgba(16,163,127,0.5)",
+              animation: `splashRing 1.6s ease-out ${delay}ms infinite`,
+            }}
+          />
+        ))}
+        <div
+          style={{
+            width: 90,
+            height: 90,
+            borderRadius: 24,
+            background: "linear-gradient(135deg, #10a37f, #0d6b5e)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 42,
+            animation: "splashPulse 1.6s ease-in-out infinite",
+            boxShadow: "0 0 40px rgba(16,163,127,0.4)",
+          }}
+        >
+          🎓
+        </div>
+      </div>
+
+      <div style={{ animation: "splashText 0.5s ease 0.3s both" }}>
+        <div
+          style={{
+            fontSize: "2.2rem",
+            fontWeight: 800,
+            color: "#fff",
+            letterSpacing: -1,
+            textAlign: "center",
+          }}
+        >
+          Exam<span style={{ color: "#10a37f" }}>AI</span>
+        </div>
+      </div>
+      <div
+        style={{
+          animation: "splashTagline 0.8s ease 0.7s both",
+          fontSize: "0.72rem",
+          color: "#888",
+          letterSpacing: 2,
+          textTransform: "uppercase",
+          marginTop: 6,
+          marginBottom: 48,
+        }}
+      >
+        Your Smart Study Partner
+      </div>
+
+      {/* Loading bar */}
+      <div
+        style={{
+          width: 140,
+          height: 2,
+          background: "#1e1e1e",
+          borderRadius: 2,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            background: "linear-gradient(90deg, #10a37f, #0dd9a7)",
+            borderRadius: 2,
+            animation: "splashBar 1.8s ease forwards",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── EXAM SELECT SCREEN ────────────────────────────────────────────────────────
+function ExamSelectScreen({ onSelect, currentExam }) {
+  const savedExam = localStorage.getItem("examai_exam") || null;
+  const [selected, setSelected] = useState(savedExam);
+  const [leaving, setLeaving] = useState(false);
+
+  const handleSelect = (e) => {
+    setSelected(e);
+    setTimeout(() => {
+      setLeaving(true);
+      setTimeout(() => onSelect(e), 350);
+    }, 120);
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        background: "#0a0a0f",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        fontFamily: "'Figtree', sans-serif",
+        overflowY: "auto",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        opacity: leaving ? 0 : 1,
+        transform: leaving ? "scale(0.96)" : "scale(1)",
+        transition: "opacity 0.35s ease, transform 0.35s ease",
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
+        @keyframes examCardIn { from{opacity:0;transform:translateY(24px) scale(0.95)} to{opacity:1;transform:translateY(0) scale(1)} }
+        @keyframes examTitleIn { from{opacity:0;transform:translateY(-20px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes glowPulse { 0%,100%{opacity:0.4} 50%{opacity:0.7} }
+        .exam-card-btn { transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1); }
+        .exam-card-btn:active { transform: scale(0.92) !important; }
+      `}</style>
+
+      {/* BG glow */}
+      <div style={{ position: "fixed", inset: 0, pointerEvents: "none" }}>
+        <div
+          style={{
+            position: "absolute",
+            top: "10%",
+            left: "30%",
+            width: 300,
+            height: 300,
+            background:
+              "radial-gradient(circle, rgba(16,163,127,0.15), transparent 70%)",
+            filter: "blur(80px)",
+            animation: "glowPulse 3s ease infinite",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: "20%",
+            right: "20%",
+            width: 250,
+            height: 250,
+            background:
+              "radial-gradient(circle, rgba(99,102,241,0.1), transparent 70%)",
+            filter: "blur(80px)",
+            animation: "glowPulse 4s ease 1s infinite",
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 480,
+          padding: "40px 20px 30px",
+          position: "relative",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            textAlign: "center",
+            marginBottom: 40,
+            animation: "examTitleIn 0.6s ease 0.1s both",
+          }}
+        >
+          <div
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: 18,
+              background: "linear-gradient(135deg, #10a37f, #0d6b5e)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 30,
+              margin: "0 auto 16px",
+              boxShadow: "0 8px 32px rgba(16,163,127,0.3)",
+            }}
+          >
+            🎓
+          </div>
+          <div
+            style={{
+              fontSize: "1.8rem",
+              fontWeight: 800,
+              color: "#fff",
+              letterSpacing: -0.5,
+            }}
+          >
+            Choose Your <span style={{ color: "#10a37f" }}>Exam</span>
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "#555", marginTop: 6 }}>
+            {currentExam
+              ? `Currently: ${currentExam} · Select to switch`
+              : "Select your target exam to begin"}
+          </div>
+        </div>
+
+        {/* Grid */}
+        <div
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
+        >
+          {EXAMS.map((e, i) => {
+            const meta = EXAM_META[e];
+            const isSelected = selected === e || currentExam === e;
+            return (
+              <button
+                key={e}
+                className="exam-card-btn"
+                onClick={() => handleSelect(e)}
+                style={{
+                  padding: "18px 16px",
+                  borderRadius: 16,
+                  background: isSelected
+                    ? `${meta.color}18`
+                    : "rgba(255,255,255,0.03)",
+                  border: `1.5px solid ${
+                    isSelected ? meta.color : "rgba(255,255,255,0.07)"
+                  }`,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  animation: `examCardIn 0.5s cubic-bezier(0.34,1.56,0.64,1) ${
+                    i * 60 + 200
+                  }ms both`,
+                  transform: isSelected ? "scale(1.02)" : "scale(1)",
+                  boxShadow: isSelected ? `0 8px 24px ${meta.color}25` : "none",
+                  backdropFilter: "blur(8px)",
+                  WebkitBackdropFilter: "blur(8px)",
+                }}
+              >
+                <div style={{ fontSize: 28, marginBottom: 8, lineHeight: 1 }}>
+                  {meta.icon}
+                </div>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    fontSize: "1rem",
+                    color: "#fff",
+                    marginBottom: 2,
+                  }}
+                >
+                  {e}
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "#555" }}>
+                  {meta.desc}
+                </div>
+                {isSelected && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 10,
+                      right: 10,
+                      width: 18,
+                      height: 18,
+                      borderRadius: "50%",
+                      background: meta.color,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="white"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {currentExam && (
+          <button
+            onClick={() => handleSelect(currentExam)}
+            style={{
+              width: "100%",
+              marginTop: 16,
+              padding: "14px",
+              borderRadius: 14,
+              background: "linear-gradient(135deg, #10a37f, #0d6b5e)",
+              border: "none",
+              color: "#fff",
+              fontSize: "0.95rem",
+              fontWeight: 700,
+              cursor: "pointer",
+              animation: "examCardIn 0.5s ease 700ms both",
+              boxShadow: "0 8px 24px rgba(16,163,127,0.3)",
+            }}
+          >
+            Continue with {currentExam} →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── SWIPE TRANSITION WRAPPER ───────────────────────────────────────────────────
+function SwipeView({ activeTab, tabs }) {
+  const [prevTab, setPrevTab] = useState(activeTab);
+  const [animating, setAnimating] = useState(false);
+  const [direction, setDirection] = useState(0);
+  const tabOrder = ["chat", "quiz", "planner"];
+
+  useEffect(() => {
+    if (activeTab !== prevTab) {
+      const from = tabOrder.indexOf(prevTab);
+      const to = tabOrder.indexOf(activeTab);
+      setDirection(to > from ? 1 : -1);
+      setAnimating(true);
+      const t = setTimeout(() => {
+        setPrevTab(activeTab);
+        setAnimating(false);
+      }, 320);
+      return () => clearTimeout(t);
+    }
+  }, [activeTab]);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        flex: 1,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <style>{`
+        @keyframes slideInFromRight { from{transform:translateX(60px);opacity:0} to{transform:translateX(0);opacity:1} }
+        @keyframes slideInFromLeft { from{transform:translateX(-60px);opacity:0} to{transform:translateX(0);opacity:1} }
+        @keyframes slideOutToLeft { from{transform:translateX(0);opacity:1} to{transform:translateX(-60px);opacity:0} }
+        @keyframes slideOutToRight { from{transform:translateX(0);opacity:1} to{transform:translateX(60px);opacity:0} }
+      `}</style>
+      {tabs[activeTab] && (
+        <div
+          key={activeTab}
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            animation: animating
+              ? `${
+                  direction > 0 ? "slideInFromRight" : "slideInFromLeft"
+                } 0.32s cubic-bezier(0.25,0.46,0.45,0.94) both`
+              : "none",
+          }}
+        >
+          {tabs[activeTab]}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── BOTTOM TAB BAR ─────────────────────────────────────────────────────────────
+function TabBar({ activeTab, onTabChange }) {
+  const tabs = [
+    { id: "chat", icon: "💬", label: "Chat" },
+    { id: "quiz", icon: "🧠", label: "Quiz" },
+    { id: "planner", icon: "📅", label: "Planner" },
+  ];
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        background: "#171717",
+        borderTop: "1px solid #2a2a2a",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        flexShrink: 0,
+        zIndex: 30,
+      }}
+    >
+      <style>{`
+        @keyframes tabPop { 0%{transform:scale(1)} 40%{transform:scale(1.3)} 70%{transform:scale(0.92)} 100%{transform:scale(1)} }
+        .tab-btn { transition: all 0.15s ease; -webkit-tap-highlight-color: transparent; }
+        .tab-btn:active { transform: scale(0.9) !important; }
+      `}</style>
+      {tabs.map((tab) => {
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            className="tab-btn"
+            onClick={() => onTabChange(tab.id)}
+            style={{
+              flex: 1,
+              padding: "10px 0 8px",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 3,
+              color: active ? "#10a37f" : "#555",
+              animation: active ? "tabPop 0.3s ease" : "none",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 20,
+                lineHeight: 1,
+                transition: "transform 0.2s",
+                transform: active ? "scale(1.1)" : "scale(1)",
+              }}
+            >
+              {tab.icon}
+            </div>
+            <div
+              style={{
+                fontSize: "0.62rem",
+                fontWeight: active ? 700 : 500,
+                letterSpacing: 0.3,
+                transition: "color 0.15s",
+              }}
+            >
+              {tab.label}
+            </div>
+            {active && (
+              <div
+                style={{
+                  width: 20,
+                  height: 2,
+                  borderRadius: 1,
+                  background: "#10a37f",
+                  marginTop: 1,
+                }}
+              />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── QUESTION TYPE DETECTOR & RENDERER ────────────────────────────────────────
+const isPipeTable = (text) => text.includes(" | ") && /[A-D]\.\s/.test(text);
+const isMatchingQuestion = (text) =>
+  /list[\s-]?i\b/i.test(text) && /list[\s-]?ii\b/i.test(text);
+
 const parsePipeTable = (text) => {
   const lines = text
     .split("\n")
@@ -74,12 +589,10 @@ const parsePipeTable = (text) => {
     header2 = "List II";
   const rows = [];
   let questionLine = "";
-
   for (const line of lines) {
     if (line.includes("|")) {
       const parts = line.split("|").map((p) => p.trim());
       if (/^[A-D]\.\s/i.test(parts[0]) || /^\d+\.\s/.test(parts[0])) {
-        // Data row: "A. item | 1. item"
         const left = parts[0].replace(/^[A-D]\.\s*/i, "").trim();
         const right = parts[1]?.replace(/^\d+\.\s*/, "").trim() || "";
         const leftLabel =
@@ -87,73 +600,44 @@ const parsePipeTable = (text) => {
         const rightLabel = parts[1]?.match(/^(\d+)\./)?.[1] || "";
         rows.push({ leftLabel, left, rightLabel, right });
       } else {
-        // Header row
         header1 = parts[0] || "List I";
         header2 = parts[1] || "List II";
       }
-    } else if (/how many|which of|select the|correctly matched/i.test(line)) {
+    } else if (/how many|which of|select the|correctly matched/i.test(line))
       questionLine = line;
-    }
   }
-
   return { header1, header2, rows, questionLine };
 };
 
-// Parse old inline format: "List I: A) X, B) Y ... List II: a) p, b) q"
 const parseInlineLists = (text) => {
   const list1Match = text.match(/list[\s-]?i[:\s]+([^.]*?)(?=list[\s-]?ii)/i);
   const list2Match = text.match(
     /list[\s-]?ii[:\s]+([^.]*?)(?=which|how many|$)/i
   );
-
   const parseItems = (str) => {
     if (!str) return [];
-    const items = [];
-    const regex =
-      /([A-Da-d1-4])[).]\s*([^,A-Da-d1-4)]+?)(?=[,;]?\s*[A-Da-d1-4][).]|$)/g;
+    const items = [],
+      regex =
+        /([A-Da-d1-4])[).]\s*([^,A-Da-d1-4)]+?)(?=[,;]?\s*[A-Da-d1-4][).]|$)/g;
     let match;
-    while ((match = regex.exec(str)) !== null) {
+    while ((match = regex.exec(str)) !== null)
       items.push({ label: match[1].toUpperCase(), text: match[2].trim() });
-    }
     return items;
   };
-
   return {
     list1Items: parseItems(list1Match?.[1] || ""),
     list2Items: parseItems(list2Match?.[1] || ""),
   };
 };
 
-// Renders the intro text before any table
-function QuestionIntro({ text }) {
-  const intro = text.split("\n")[0];
-  if (!intro || /list[\s-]?i\b/i.test(intro) || intro.includes("|"))
-    return null;
-  return (
-    <div
-      style={{
-        fontSize: "0.9rem",
-        color: "#fff",
-        lineHeight: 1.6,
-        fontWeight: 500,
-        marginBottom: 10,
-      }}
-    >
-      {intro}
-    </div>
-  );
-}
-
-// Main smart question renderer
 function SmartQuestionDisplay({ question }) {
-  // Get preamble (line before any table)
   const lines = question
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
   const preambleLines = [];
-  let tableStarted = false;
-  let bottomLine = "";
+  let tableStarted = false,
+    bottomLine = "";
   for (const line of lines) {
     if (
       !tableStarted &&
@@ -161,15 +645,12 @@ function SmartQuestionDisplay({ question }) {
       !/^[A-D]\.\s/i.test(line) &&
       !/list[\s-]?i\b/i.test(line)
     ) {
-      if (/how many|which of|select the|correctly matched/i.test(line)) {
+      if (/how many|which of|select the|correctly matched/i.test(line))
         bottomLine = line;
-      } else preambleLines.push(line);
-    } else {
-      tableStarted = true;
-    }
+      else preambleLines.push(line);
+    } else tableStarted = true;
   }
 
-  // Case 1: Pipe table format
   if (isPipeTable(question)) {
     const { header1, header2, rows, questionLine } = parsePipeTable(question);
     return (
@@ -283,7 +764,6 @@ function SmartQuestionDisplay({ question }) {
     );
   }
 
-  // Case 2: Old inline List I / List II format
   if (isMatchingQuestion(question)) {
     const { list1Items, list2Items } = parseInlineLists(question);
     const questionText =
@@ -293,7 +773,6 @@ function SmartQuestionDisplay({ question }) {
       question.match(/list[\s-]?i\s*\(([^)]+)\)/i)?.[1] || "List I";
     const list2Header =
       question.match(/list[\s-]?ii\s*\(([^)]+)\)/i)?.[1] || "List II";
-
     if (list1Items.length > 0 && list2Items.length > 0) {
       const maxRows = Math.max(list1Items.length, list2Items.length);
       const intro = question.split(/list[\s-]?i\b/i)[0].trim();
@@ -411,9 +890,8 @@ function SmartQuestionDisplay({ question }) {
     }
   }
 
-  // Case 3: Statement-based or plain question — render as-is
-  const formatQuestion = (text) => {
-    return text
+  const formatQuestion = (text) =>
+    text
       .replace(/(Consider the following statements?:?\s*)/gi, "$1\n")
       .replace(/(Statement\s+I{1,3}:)/gi, "\n$1")
       .replace(/(\d+\.\s)/g, "\n\n$1")
@@ -423,7 +901,6 @@ function SmartQuestionDisplay({ question }) {
       )
       .replace(/\n{3,}/g, "\n\n")
       .trim();
-  };
   return (
     <div
       style={{
@@ -440,7 +917,7 @@ function SmartQuestionDisplay({ question }) {
 }
 
 // ── QUIZ SCREEN ───────────────────────────────────────────────────────────────
-function QuizScreen({ exam, onBack, API_URL }) {
+function QuizScreen({ exam, API_URL }) {
   const [screen, setScreen] = useState("setup");
   const [topic, setTopic] = useState("");
   const [count, setCount] = useState(10);
@@ -565,54 +1042,26 @@ function QuizScreen({ exam, onBack, API_URL }) {
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        height: "100dvh",
         background: "#212121",
         color: "#ececec",
         fontFamily: "'Figtree', sans-serif",
+        overflow: "hidden",
       }}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          justifyContent: "space-between",
           padding: "12px 16px",
           borderBottom: "1px solid #2a2a2a",
           flexShrink: 0,
         }}
       >
-        <button
-          onClick={onBack}
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "#888",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            fontSize: "0.85rem",
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <path d="M19 12H5M12 5l-7 7 7 7" />
-          </svg>{" "}
-          Back
-        </button>
-        <div style={{ flex: 1, textAlign: "center" }}>
-          <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
-            Quiz Mode
-          </div>
-          <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
+        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
+          🧠 Quiz Mode
         </div>
+        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
         <button
           onClick={loadHistory}
           style={{
@@ -928,7 +1377,6 @@ function QuizScreen({ exam, onBack, API_URL }) {
                   border: "1px solid #10a37f40",
                   borderRadius: 10,
                   padding: "12px 14px",
-                  animation: "fadeIn 0.2s ease",
                 }}
               >
                 <div
@@ -965,7 +1413,6 @@ function QuizScreen({ exam, onBack, API_URL }) {
                   fontSize: "0.95rem",
                   fontWeight: 700,
                   cursor: "pointer",
-                  animation: "fadeIn 0.2s ease",
                 }}
               >
                 {current + 1 >= questions.length
@@ -1253,14 +1700,14 @@ function QuizScreen({ exam, onBack, API_URL }) {
 }
 
 // ── STUDY PLANNER SCREEN ──────────────────────────────────────────────────────
-function PlannerScreen({ exam, onBack, API_URL }) {
-  const [screen, setScreen] = useState("setup"); // setup | loading | view | list
+function PlannerScreen({ exam, API_URL }) {
+  const [screen, setScreen] = useState("setup");
   const [examDate, setExamDate] = useState("");
   const [topics, setTopics] = useState("");
   const [hoursPerDay, setHoursPerDay] = useState(4);
   const [plan, setPlan] = useState(null);
   const [savedPlans, setSavedPlans] = useState([]);
-  const [viewMode, setViewMode] = useState("list"); // list | week
+  const [viewMode, setViewMode] = useState("list");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentWeek, setCurrentWeek] = useState(0);
@@ -1345,11 +1792,9 @@ function PlannerScreen({ exam, onBack, API_URL }) {
   const progressPct = totalDays
     ? Math.round((completedCount / totalDays) * 100)
     : 0;
-
   const daysInWeek =
     plan?.days?.slice(currentWeek * 7, currentWeek * 7 + 7) || [];
   const totalWeeks = plan ? Math.ceil(plan.days.length / 7) : 0;
-
   const today = new Date().toISOString().split("T")[0];
   const daysLeft = plan?.examDate
     ? Math.max(0, Math.ceil((new Date(plan.examDate) - new Date()) / 86400000))
@@ -1361,55 +1806,26 @@ function PlannerScreen({ exam, onBack, API_URL }) {
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        height: "100dvh",
         background: "#212121",
         color: "#ececec",
         fontFamily: "'Figtree', sans-serif",
+        overflow: "hidden",
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          justifyContent: "space-between",
           padding: "12px 16px",
           borderBottom: "1px solid #2a2a2a",
           flexShrink: 0,
         }}
       >
-        <button
-          onClick={onBack}
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "#888",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            fontSize: "0.85rem",
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <path d="M19 12H5M12 5l-7 7 7 7" />
-          </svg>{" "}
-          Back
-        </button>
-        <div style={{ flex: 1, textAlign: "center" }}>
-          <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
-            Study Planner
-          </div>
-          <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
+        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
+          📅 Study Planner
         </div>
+        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
         <button
           onClick={() => setScreen("list")}
           style={{
@@ -1423,9 +1839,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
           📋 Saved
         </button>
       </div>
-
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px" }}>
-        {/* SETUP */}
         {screen === "setup" && (
           <div
             style={{
@@ -1447,7 +1861,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 AI will build a personalized day-by-day schedule
               </div>
             </div>
-
             <div>
               <label
                 style={{
@@ -1478,7 +1891,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 }}
               />
             </div>
-
             <div>
               <label
                 style={{
@@ -1489,14 +1901,12 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 }}
               >
                 Topics to Cover{" "}
-                <span style={{ color: "#555" }}>
-                  (optional — leave blank for full syllabus)
-                </span>
+                <span style={{ color: "#555" }}>(optional)</span>
               </label>
               <textarea
                 value={topics}
                 onChange={(e) => setTopics(e.target.value)}
-                placeholder="e.g. Indian History, Polity, Geography, Economics..."
+                placeholder="e.g. Indian History, Polity, Geography..."
                 rows={3}
                 style={{
                   width: "100%",
@@ -1512,7 +1922,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 }}
               />
             </div>
-
             <div>
               <label
                 style={{
@@ -1548,7 +1957,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 ))}
               </div>
             </div>
-
             {error && (
               <div
                 style={{
@@ -1563,7 +1971,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 {error}
               </div>
             )}
-
             <button
               onClick={generatePlan}
               style={{
@@ -1576,32 +1983,12 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 fontSize: "1rem",
                 fontWeight: 700,
                 cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
               }}
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="white"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              >
-                <rect x="3" y="4" width="18" height="18" rx="2" />
-                <line x1="16" y1="2" x2="16" y2="6" />
-                <line x1="8" y1="2" x2="8" y2="6" />
-                <line x1="3" y1="10" x2="21" y2="10" />
-              </svg>
               Generate My Plan
             </button>
           </div>
         )}
-
-        {/* LOADING */}
         {screen === "loading" && (
           <div
             style={{
@@ -1632,11 +2019,8 @@ function PlannerScreen({ exam, onBack, API_URL }) {
             </div>
           </div>
         )}
-
-        {/* VIEW PLAN */}
         {screen === "view" && plan && (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
-            {/* Plan header */}
             <div
               style={{
                 background: "linear-gradient(135deg, #10a37f20, #0d8a6a10)",
@@ -1685,7 +2069,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                   </span>
                 </div>
               </div>
-              {/* Progress bar */}
               <div
                 style={{
                   marginTop: 12,
@@ -1708,8 +2091,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 {progressPct}% complete
               </div>
             </div>
-
-            {/* View mode toggle */}
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               {[
                 ["list", "📋 Day List"],
@@ -1736,15 +2117,13 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 </button>
               ))}
             </div>
-
-            {/* DAY LIST VIEW */}
             {viewMode === "list" && (
               <div
                 style={{ display: "flex", flexDirection: "column", gap: 12 }}
               >
                 {plan.days.map((day, i) => {
-                  const isToday = day.date === today;
-                  const isPast = day.date < today;
+                  const isToday = day.date === today,
+                    isPast = day.date < today;
                   return (
                     <div
                       key={i}
@@ -1764,7 +2143,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                         borderRadius: 12,
                         padding: "14px 16px",
                         opacity: isPast && !day.completed ? 0.7 : 1,
-                        transition: "all 0.2s",
                       }}
                     >
                       <div
@@ -1774,7 +2152,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                           gap: 12,
                         }}
                       >
-                        {/* Checkbox */}
                         <button
                           onClick={() => toggleDay(i)}
                           style={{
@@ -1878,7 +2255,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                           >
                             {day.focus}
                           </div>
-                          {/* Topics */}
                           <div
                             style={{
                               display: "flex",
@@ -1902,7 +2278,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                               </span>
                             ))}
                           </div>
-                          {/* Details */}
                           <div
                             style={{
                               display: "flex",
@@ -1936,8 +2311,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 })}
               </div>
             )}
-
-            {/* WEEKLY VIEW */}
             {viewMode === "week" && (
               <div>
                 <div
@@ -2083,12 +2456,11 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                 </div>
               </div>
             )}
-
-            <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+            <div style={{ marginTop: 20 }}>
               <button
                 onClick={() => setScreen("setup")}
                 style={{
-                  flex: 1,
+                  width: "100%",
                   padding: 12,
                   background: "#2a2a2a",
                   border: "1px solid #3a3a3a",
@@ -2103,8 +2475,6 @@ function PlannerScreen({ exam, onBack, API_URL }) {
             </div>
           </div>
         )}
-
-        {/* SAVED PLANS LIST */}
         {screen === "list" && (
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div
@@ -2138,9 +2508,9 @@ function PlannerScreen({ exam, onBack, API_URL }) {
             ) : (
               savedPlans.map((p) => {
                 const completed =
-                  p.days?.filter((d) => d.completed).length || 0;
-                const total = p.days?.length || 0;
-                const pct = total ? Math.round((completed / total) * 100) : 0;
+                    p.days?.filter((d) => d.completed).length || 0,
+                  total = p.days?.length || 0,
+                  pct = total ? Math.round((completed / total) * 100) : 0;
                 return (
                   <div
                     key={p._id}
@@ -2246,13 +2616,11 @@ function PlannerScreen({ exam, onBack, API_URL }) {
   );
 }
 
-// ── MAIN APP ──────────────────────────────────────────────────────────────────
-export default function App() {
-  const [screen, setScreen] = useState("chat"); // chat | quiz | planner
+// ── CHAT SCREEN ───────────────────────────────────────────────────────────────
+function ChatScreen({ exam, onChangeExam, API_URL }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [exam, setExam] = useState("General");
   const [voice, setVoice] = useState("hannah");
   const [showExamMenu, setShowExamMenu] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -2274,7 +2642,6 @@ export default function App() {
   const voiceRef = useRef(voice);
   const messagesRef = useRef(messages);
   const currentChatIdRef = useRef(currentChatId);
-  const API_URL = import.meta.env.VITE_API_URL;
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -2338,7 +2705,6 @@ export default function App() {
       const data = await res.json();
       setCurrentChatId(chatId);
       setMessages(data.messages || []);
-      setExam(data.exam || "General");
       setShowSidebar(false);
     } catch (e) {
       showToast("⚠️ Failed to load chat.");
@@ -2577,82 +2943,22 @@ export default function App() {
   };
 
   const isEmpty = messages.length === 0;
-  const GLOBAL_STYLES = `
-    @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    html, body { overflow: hidden; overscroll-behavior: none; background: #212121; }
-    textarea, input { font-family: 'Figtree', system-ui, sans-serif !important; }
-    textarea { font-size: 16px !important; }
-    .msg-content p { margin-bottom: 10px; line-height: 1.75; } .msg-content p:last-child { margin-bottom: 0; }
-    .msg-content ul, .msg-content ol { padding-left: 20px; margin: 8px 0; } .msg-content li { margin-bottom: 6px; line-height: 1.7; }
-    .msg-content strong { font-weight: 600; color: #fff; } .msg-content em { color: #ccc; }
-    .msg-content code { background: #343434; padding: 2px 6px; border-radius: 4px; font-size: 0.84em; color: #e0e0e0; }
-    .msg-content pre { background: #1a1a1a; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; }
-    .msg-content h1,.msg-content h2,.msg-content h3 { margin: 14px 0 6px; color: #fff; font-weight: 600; }
-    .msg-content blockquote { border-left: 3px solid #10a37f; padding-left: 12px; color: #aaa; margin: 8px 0; }
-    .msg-content table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.85rem; }
-    .msg-content th { background: #2a2a2a; color: #fff; padding: 8px 12px; text-align: left; border: 1px solid #3a3a3a; }
-    .msg-content td { padding: 7px 12px; border: 1px solid #2a2a2a; color: #ddd; }
-    .msg-content tr:nth-child(even) td { background: #1e1e1e; }
-    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes dotPulse { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
-    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-    @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
-    @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
-    .dot1 { animation: dotPulse 1s ease-in-out infinite; } .dot2 { animation: dotPulse 1s ease-in-out 0.15s infinite; } .dot3 { animation: dotPulse 1s ease-in-out 0.3s infinite; }
-    .suggestion-btn:active { background: #343434 !important; } .exam-opt:active { background: #3a3a3a !important; }
-    .send-btn:active { transform: scale(0.9); } .img-btn:active { opacity: 0.5; }
-    .attach-opt:hover { background: #333 !important; } .attach-opt:active { background: #3a3a3a !important; }
-    .mic-btn-active { animation: pulse 0.8s ease-in-out infinite; }
-    .chat-item:hover { background: #2a2a2a !important; } .chat-item:hover .delete-btn { opacity: 1 !important; }
-    select option { background: #2a2a2a; color: #ececec; }
-  `;
-
-  if (screen === "quiz")
-    return (
-      <div style={{ fontFamily: "'Figtree', sans-serif" }}>
-        <style>{GLOBAL_STYLES}</style>
-        <QuizScreen
-          exam={exam}
-          onBack={() => setScreen("chat")}
-          API_URL={API_URL}
-        />
-      </div>
-    );
-  if (screen === "planner")
-    return (
-      <div style={{ fontFamily: "'Figtree', sans-serif" }}>
-        <style>{GLOBAL_STYLES}</style>
-        <PlannerScreen
-          exam={exam}
-          onBack={() => setScreen("chat")}
-          API_URL={API_URL}
-        />
-      </div>
-    );
 
   return (
     <div
       style={{
-        minHeight: "100dvh",
-        width: "100%",
+        flex: 1,
         display: "flex",
         flexDirection: "row",
-        background: "#212121",
-        color: "#ececec",
-        fontFamily: "'Figtree', system-ui, sans-serif",
+        minWidth: 0,
+        overflow: "hidden",
       }}
       onClick={() => {
         setShowExamMenu(false);
         setShowAttachMenu(false);
       }}
     >
-      <style>{GLOBAL_STYLES}</style>
-
-      {/* SIDEBAR */}
+      {/* SIDEBAR OVERLAY */}
       {showSidebar && (
         <div
           onClick={() => setShowSidebar(false)}
@@ -2668,7 +2974,7 @@ export default function App() {
         style={{
           width: showSidebar ? 260 : 0,
           minWidth: showSidebar ? 260 : 0,
-          height: "100dvh",
+          height: "100%",
           background: "#171717",
           borderRight: "1px solid #2a2a2a",
           display: "flex",
@@ -2680,6 +2986,7 @@ export default function App() {
           position: "fixed",
           top: 0,
           left: 0,
+          bottom: 0,
           paddingTop: "env(safe-area-inset-top)",
         }}
       >
@@ -2749,62 +3056,6 @@ export default function App() {
             New Chat
           </button>
         </div>
-
-        {/* Feature buttons in sidebar */}
-        <div
-          style={{
-            padding: "8px 10px 0",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          <button
-            onClick={() => {
-              setScreen("quiz");
-              setShowSidebar(false);
-            }}
-            style={{
-              padding: "9px 14px",
-              background: "#1a1a1a",
-              border: "1px solid #2a2a2a",
-              borderRadius: 9,
-              color: "#f59e0b",
-              fontSize: "0.85rem",
-              fontWeight: 600,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              textAlign: "left",
-            }}
-          >
-            🧠 Quiz Mode
-          </button>
-          <button
-            onClick={() => {
-              setScreen("planner");
-              setShowSidebar(false);
-            }}
-            style={{
-              padding: "9px 14px",
-              background: "#1a1a1a",
-              border: "1px solid #2a2a2a",
-              borderRadius: 9,
-              color: "#a78bfa",
-              fontSize: "0.85rem",
-              fontWeight: 600,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              textAlign: "left",
-            }}
-          >
-            📅 Study Planner
-          </button>
-        </div>
-
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
           {loadingChats ? (
             <div
@@ -2833,7 +3084,6 @@ export default function App() {
             chatList.map((chat) => (
               <div
                 key={chat._id}
-                className="chat-item"
                 onClick={() => loadChat(chat._id)}
                 style={{
                   padding: "9px 10px",
@@ -2845,7 +3095,6 @@ export default function App() {
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
-                  transition: "background 0.15s",
                   position: "relative",
                 }}
               >
@@ -2881,17 +3130,14 @@ export default function App() {
                   </div>
                 </div>
                 <button
-                  className="delete-btn"
                   onClick={(e) => deleteChat(chat._id, e)}
                   style={{
-                    opacity: 0,
                     background: "transparent",
                     border: "none",
                     cursor: "pointer",
                     color: "#666",
                     padding: 3,
                     borderRadius: 4,
-                    transition: "opacity 0.15s",
                     flexShrink: 0,
                   }}
                 >
@@ -2915,16 +3161,14 @@ export default function App() {
         </div>
       </div>
 
-      {/* MAIN CHAT */}
+      {/* MAIN CHAT AREA */}
       <div
         style={{
           flex: 1,
           display: "flex",
           flexDirection: "column",
           minWidth: 0,
-          height: "100dvh",
-          paddingTop: "env(safe-area-inset-top)",
-          paddingBottom: "env(safe-area-inset-bottom)",
+          overflow: "hidden",
         }}
       >
         {/* HEADER */}
@@ -2938,7 +3182,6 @@ export default function App() {
             borderBottom: "1px solid #2a2a2a",
             flexShrink: 0,
             zIndex: 20,
-            minHeight: 52,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -3062,15 +3305,13 @@ export default function App() {
                     zIndex: 100,
                     minWidth: 110,
                     boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
-                    animation: "fadeIn 0.12s ease",
                   }}
                 >
                   {EXAMS.map((e) => (
                     <button
                       key={e}
-                      className="exam-opt"
                       onClick={() => {
-                        setExam(e);
+                        onChangeExam(e);
                         setShowExamMenu(false);
                       }}
                       style={{
@@ -3166,7 +3407,6 @@ export default function App() {
                 ].map((s, i) => (
                   <button
                     key={i}
-                    className="suggestion-btn"
                     onClick={() => setInput(s.slice(3))}
                     style={{
                       background: "#2a2a2a",
@@ -3177,51 +3417,12 @@ export default function App() {
                       fontSize: "0.85rem",
                       textAlign: "left",
                       cursor: "pointer",
-                      transition: "background 0.15s",
                       fontFamily: "'Figtree', sans-serif",
                     }}
                   >
                     {s}
                   </button>
                 ))}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    onClick={() => setScreen("quiz")}
-                    style={{
-                      flex: 1,
-                      background: "#f59e0b15",
-                      border: "1px solid #f59e0b30",
-                      borderRadius: 10,
-                      padding: "11px 14px",
-                      color: "#f59e0b",
-                      fontSize: "0.85rem",
-                      textAlign: "left",
-                      cursor: "pointer",
-                      fontFamily: "'Figtree', sans-serif",
-                      fontWeight: 500,
-                    }}
-                  >
-                    🧠 Take a Quiz
-                  </button>
-                  <button
-                    onClick={() => setScreen("planner")}
-                    style={{
-                      flex: 1,
-                      background: "#a78bfa15",
-                      border: "1px solid #a78bfa30",
-                      borderRadius: 10,
-                      padding: "11px 14px",
-                      color: "#a78bfa",
-                      fontSize: "0.85rem",
-                      textAlign: "left",
-                      cursor: "pointer",
-                      fontFamily: "'Figtree', sans-serif",
-                      fontWeight: 500,
-                    }}
-                  >
-                    📅 Study Plan
-                  </button>
-                </div>
               </div>
             </div>
           ) : (
@@ -3294,33 +3495,18 @@ export default function App() {
                               height: 28,
                             }}
                           >
-                            <div
-                              className="dot1"
-                              style={{
-                                width: 7,
-                                height: 7,
-                                borderRadius: "50%",
-                                background: "#10a37f",
-                              }}
-                            />
-                            <div
-                              className="dot2"
-                              style={{
-                                width: 7,
-                                height: 7,
-                                borderRadius: "50%",
-                                background: "#10a37f",
-                              }}
-                            />
-                            <div
-                              className="dot3"
-                              style={{
-                                width: 7,
-                                height: 7,
-                                borderRadius: "50%",
-                                background: "#10a37f",
-                              }}
-                            />
+                            {["dot1", "dot2", "dot3"].map((c) => (
+                              <div
+                                key={c}
+                                className={c}
+                                style={{
+                                  width: 7,
+                                  height: 7,
+                                  borderRadius: "50%",
+                                  background: "#10a37f",
+                                }}
+                              />
+                            ))}
                           </div>
                         ) : (
                           <div
@@ -3361,8 +3547,7 @@ export default function App() {
         <div
           style={{
             flexShrink: 0,
-            padding: "8px 12px",
-            paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
+            padding: "8px 12px 10px",
             background: "#212121",
             borderTop: isEmpty ? "none" : "1px solid #2a2a2a",
           }}
@@ -3374,7 +3559,6 @@ export default function App() {
                 marginBottom: 6,
                 fontSize: "0.75rem",
                 color: "#10a37f",
-                animation: "fadeIn 0.2s ease",
               }}
             >
               🎤 Recording... release to send
@@ -3393,7 +3577,6 @@ export default function App() {
             }}
           >
             <button
-              className="img-btn"
               onClick={(e) => {
                 e.stopPropagation();
                 setShowAttachMenu(true);
@@ -3460,7 +3643,6 @@ export default function App() {
               }}
             />
             <button
-              className={isListening ? "mic-btn-active" : ""}
               onMouseDown={startListening}
               onMouseUp={stopListening}
               onMouseLeave={stopListening}
@@ -3484,7 +3666,6 @@ export default function App() {
                 justifyContent: "center",
                 flexShrink: 0,
                 marginBottom: 1,
-                transition: "all 0.15s",
                 userSelect: "none",
                 WebkitUserSelect: "none",
               }}
@@ -3552,10 +3733,11 @@ export default function App() {
                 paddingBottom: 5,
                 WebkitAppearance: "none",
                 caretColor: "#10a37f",
+                fontFamily: "'Figtree', sans-serif",
+                fontSize: 16,
               }}
             />
             <button
-              className="send-btn"
               onClick={sendMessage}
               disabled={loading || !input.trim()}
               style={{
@@ -3613,7 +3795,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* BOTTOM SHEET */}
+      {/* ATTACH BOTTOM SHEET */}
       {showAttachMenu && (
         <div
           onClick={() => setShowAttachMenu(false)}
@@ -3710,7 +3892,6 @@ export default function App() {
             ].map(({ label, ref, icon }) => (
               <button
                 key={label}
-                className="attach-opt"
                 onClick={() => {
                   ref.current.click();
                   setShowAttachMenu(false);
@@ -3765,7 +3946,6 @@ export default function App() {
             fontSize: "0.82rem",
             fontWeight: 500,
             zIndex: 999,
-            animation: "toastIn 0.2s ease",
             whiteSpace: "nowrap",
             boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
           }}
@@ -3773,6 +3953,150 @@ export default function App() {
           {toast}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── MAIN APP ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const [appState, setAppState] = useState("splash"); // splash | exam-select | main
+  const [exam, setExam] = useState("");
+  const [activeTab, setActiveTab] = useState("chat");
+  const API_URL = import.meta.env.VITE_API_URL;
+
+  const GLOBAL_STYLES = `
+    @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { overflow: hidden; overscroll-behavior: none; background: #212121; height: 100%; }
+    textarea, input { font-family: 'Figtree', system-ui, sans-serif !important; }
+    textarea { font-size: 16px !important; }
+    .msg-content p { margin-bottom: 10px; line-height: 1.75; } .msg-content p:last-child { margin-bottom: 0; }
+    .msg-content ul, .msg-content ol { padding-left: 20px; margin: 8px 0; } .msg-content li { margin-bottom: 6px; line-height: 1.7; }
+    .msg-content strong { font-weight: 600; color: #fff; } .msg-content em { color: #ccc; }
+    .msg-content code { background: #343434; padding: 2px 6px; border-radius: 4px; font-size: 0.84em; color: #e0e0e0; }
+    .msg-content pre { background: #1a1a1a; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; }
+    .msg-content h1,.msg-content h2,.msg-content h3 { margin: 14px 0 6px; color: #fff; font-weight: 600; }
+    .msg-content blockquote { border-left: 3px solid #10a37f; padding-left: 12px; color: #aaa; margin: 8px 0; }
+    .msg-content table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.85rem; }
+    .msg-content th { background: #2a2a2a; color: #fff; padding: 8px 12px; text-align: left; border: 1px solid #3a3a3a; }
+    .msg-content td { padding: 7px 12px; border: 1px solid #2a2a2a; color: #ddd; }
+    .msg-content tr:nth-child(even) td { background: #1e1e1e; }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes dotPulse { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+    .dot1 { animation: dotPulse 1s ease-in-out infinite; } .dot2 { animation: dotPulse 1s ease-in-out 0.15s infinite; } .dot3 { animation: dotPulse 1s ease-in-out 0.3s infinite; }
+    select option { background: #2a2a2a; color: #ececec; }
+  `;
+
+  const handleSplashDone = () => {
+    // Always show exam-select so user consciously picks/confirms their exam
+    setAppState("exam-select");
+  };
+
+  const handleExamSelect = (e) => {
+    localStorage.setItem("examai_exam", e);
+    setExam(e);
+    setAppState("main");
+  };
+
+  const handleChangeExam = (e) => {
+    localStorage.setItem("examai_exam", e);
+    setExam(e);
+  };
+
+  if (appState === "splash")
+    return (
+      <>
+        <style>{GLOBAL_STYLES}</style>
+        <SplashScreen onDone={handleSplashDone} />
+      </>
+    );
+
+  if (appState === "exam-select")
+    return (
+      <>
+        <style>{GLOBAL_STYLES}</style>
+        <ExamSelectScreen
+          onSelect={handleExamSelect}
+          currentExam={exam || null}
+        />
+      </>
+    );
+
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        background: "#212121",
+        color: "#ececec",
+        fontFamily: "'Figtree', system-ui, sans-serif",
+        paddingTop: "env(safe-area-inset-top)",
+      }}
+    >
+      <style>{GLOBAL_STYLES}</style>
+
+      {/* Exam change button — top bar only in main app */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          padding: "6px 12px 0",
+          flexShrink: 0,
+        }}
+      >
+        <button
+          onClick={() => setAppState("exam-select")}
+          style={{
+            background: "transparent",
+            border: "1px solid #2a2a2a",
+            borderRadius: 8,
+            padding: "4px 10px",
+            color: "#555",
+            fontSize: "0.72rem",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            fontFamily: "'Figtree', sans-serif",
+          }}
+        >
+          {EXAM_META[exam]?.icon} {exam}
+          <svg width="8" height="5" viewBox="0 0 10 6" fill="none">
+            <path
+              d="M1 1L5 5L9 1"
+              stroke="#555"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      </div>
+
+      {/* Swipe Tab Area */}
+      <SwipeView
+        activeTab={activeTab}
+        tabs={{
+          chat: (
+            <ChatScreen
+              exam={exam}
+              onChangeExam={handleChangeExam}
+              API_URL={API_URL}
+            />
+          ),
+          quiz: <QuizScreen exam={exam} API_URL={API_URL} />,
+          planner: <PlannerScreen exam={exam} API_URL={API_URL} />,
+        }}
+      />
+
+      {/* Bottom Tab Bar */}
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
     </div>
   );
 }

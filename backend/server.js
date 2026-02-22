@@ -44,65 +44,93 @@ const getPlanners = () => db.collection("study_planners");
 const getQuizPrompt = (exam, topic, count) => {
   const examInstructions = {
     UPSC: `
-You are a UPSC Civil Services Preliminary Examination question setter. Study these EXACT formats from UPSC CSP 2025 paper and replicate them faithfully for the topic "${topic}".
+You are a UPSC Civil Services Preliminary Examination question setter.
 
-FORMAT 1 — STATEMENT-BASED (PRIMARY FORMAT — use for 60% of all questions generated):
+Your task is to generate questions STRICTLY based on:
+
+1. UPSC Prelims General Studies Paper I PYQs from 2014–2023
+2. NCERT textbooks from Class 6 to Class 12 ONLY
+   - Polity: Class 8–12 NCERT
+   - History: Class 6–12 NCERT
+   - Geography: Class 6–12 NCERT
+   - Economy: Class 9–12 NCERT
+   - Environment: Class 7–12 NCERT
+   - Science: Class 6–12 NCERT basics
+
+ABSOLUTE CONTENT RESTRICTIONS:
+- DO NOT invent Articles, Acts, committees, or schemes.
+- DO NOT use coaching institute material.
+- DO NOT create imaginary constitutional provisions.
+- Every fact must be verifiable from NCERT or real UPSC PYQs (2014–2025).
+- If unsure, avoid that fact.
+
+STYLE REQUIREMENTS (MUST MIRROR REAL UPSC):
+
+FORMAT 1 — STATEMENT-BASED (60% minimum)
 "Consider the following statements:
-1. [Factual statement — mix of true and false]
-2. [Factual statement — mix of true and false]  
-3. [Factual statement — mix of true and false]
-Which of the statements given above is/are correct?
-A) 1 only  B) 1 and 2 only  C) 2 and 3 only  D) 1, 2 and 3"
-→ Options must be: "X only", "X and Y only", "X, Y and Z", "None" — never "All of the above"
-→ Exactly 2-3 statements. At least one statement must be subtly WRONG (plausible but incorrect)
-→ The correct answer should NOT always be "all correct" — vary it
+1. [Conceptual statement]
+2. [Conceptual statement]
+3. [Conceptual statement]
+Which of the statements given above is/are correct?"
 
-FORMAT 2 — STATEMENT I / STATEMENT II (~20% of questions):
-"Consider the following statements:
-Statement I: [A factual claim]
-Statement II: [A related but different factual claim]
-Which one of the following is correct in respect of the above statements?
-A) Both Statement I and Statement II are correct and Statement II explains Statement I
-B) Both Statement I and Statement II are correct but Statement II does not explain Statement I
-C) Statement I is correct but Statement II is not correct
-D) Statement I is not correct but Statement II is correct"
-→ The two statements must be related but the connection (whether II explains I) is the trap
+Options:
+A) 1 only  
+B) 1 and 2 only  
+C) 2 and 3 only  
+D) 1, 2 and 3  
 
-FORMAT 3 — MATCH LIST I WITH LIST II (~10% of questions):
-"With reference to [topic], consider the following:
-List I (Column heading): [item A], [item B], [item C], [item D]
-List II (Column heading): [item 1], [item 2], [item 3], [item 4]
-How many of the above pairs are correctly matched?
-A) Only one  B) Only two  C) Only three  D) All four"
-OR with combo options: "A) A-2, B-3, C-4, D-1  B) A-3, B-2, C-1, D-4  ..."
-→ Use REAL matching items (Acts-Ministries, Countries-Resources, Events-Dates, etc.)
-→ Include deliberate mismatches as traps
+Rules:
+- At least ONE statement must be subtly incorrect.
+- Statements must test conceptual clarity.
+- Avoid trivial factual recall.
 
-FORMAT 4 — COUNT-BASED (~5% of questions):
-"Consider the following:
-I. [item]
-II. [item]
-III. [item]
-IV. [item]
-How many of the above are [condition]?
-A) Only one  B) Only two  C) Only three  D) All four"
-→ Used for: NATO members, BRICS countries, treaty signatories, minerals, etc.
+FORMAT 2 — STATEMENT I / STATEMENT II (20%)
+Use exact 4-option structure used in UPSC:
+A) Both correct and II explains I  
+B) Both correct but II does not explain I  
+C) I correct but II incorrect  
+D) I incorrect but II correct  
 
-FORMAT 5 — DIRECT SINGLE ANSWER (~5% of questions):
-A precise factual question with 4 options where only one is definitively correct.
-Used for: "Who among the following...", "Which one of the following...", "When was...", "Where was..."
+FORMAT 3 — MATCH LIST I / LIST II (10%)
 
-ABSOLUTE RULES FROM UPSC CSP 2025:
-- MOST IMPORTANT: Out of every 10 questions, at least 6 MUST be FORMAT 1 (statement-based with numbered statements). Do NOT generate equal distribution — statement-based is what UPSC uses most.
-- Every question MUST cite real Acts (with year), real Articles, real committee names, real places
-- Distractors must use REAL but WRONG facts — not obviously fabricated ones
-- Questions test ANALYTICAL thinking, NOT rote recall
-- Options like "I and II only", "II and III only", "I and III only", "I, II and III" — use these exact phrasings
-- NEVER use "All of the above" or "None of the above" — UPSC stopped using these
-- Explanation must specify exactly WHICH Article/Act/fact/year makes each statement right or wrong
-- For Statement I/II format: always use the exact 4-option structure shown above
-- Difficulty: 50% hard (requires deep knowledge), 40% medium (requires analysis), 10% easy
-- Topics to reference for ${topic}: use real current affairs 2023-2025, real constitutional provisions, real government schemes with correct details
+You MUST generate match questions in STRICT pipe-table format like this:
+
+List I | List II
+A. Inflation | 1. Rise in general price level
+B. Deflation | 2. Fall in general price level
+C. Stagflation | 3. Rise in price level with unemployment
+
+Then ask:
+"How many of the above pairs are correctly matched?"
+
+Options:
+A) Only one
+B) Only two
+C) Only three
+D) All three
+
+STRICT RULES:
+- ALWAYS use pipe symbol (|)
+- ALWAYS keep exactly one space before and after |
+- ALWAYS label left column as A., B., C.
+- ALWAYS label right column as 1., 2., 3.
+- NEVER write inline paragraph format
+- NEVER mix List II in same sentence as List I
+
+FORMAT 4 — DIRECT (10%)
+One precise conceptual question.
+
+DIFFICULTY DISTRIBUTION:
+- 50% Moderate (elimination-based)
+- 40% Hard (requires deep conceptual clarity)
+- 10% Easy (NCERT factual base)
+
+MOST IMPORTANT:
+- Mimic structure of real UPSC PYQs (2014–2023)
+- Do NOT copy exact PYQs.
+- Generate NEW questions in similar framing style.
+
+Topic to generate questions from: "${topic}"
 `,
 
     JEE: `
@@ -206,11 +234,11 @@ Explanation should be educational and 2-3 sentences.
     // Pattern per 10 questions: 6 statement-based, 2 statement-I/II, 1 match-list, 1 direct
     const pattern = [
       "STATEMENT-BASED",
-      "STATEMENT-BASED",
+      "MATCH-LIST",
       "STATEMENT-BASED",
       "STATEMENT-I/II",
       "STATEMENT-BASED",
-      "STATEMENT-BASED",
+      "DIRECT",
       "STATEMENT-I/II",
       "STATEMENT-BASED",
       "MATCH-LIST",
@@ -374,7 +402,7 @@ app.post("/quiz/generate", async (req, res) => {
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.7,
+          temperature: 0.4,
           max_tokens: 4096,
         }),
       }
