@@ -49,11 +49,395 @@ const EXAMS = [
   "Banking",
   "GATE",
   "CAT",
-  "CBSE 10th",
-  "CBSE 12th",
 ];
 const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
 const USER_ID = getUserId();
+
+// ── QUESTION TYPE DETECTOR & RENDERER ────────────────────────────────────────
+
+// Detects if a question contains a pipe-separated table (new format from AI)
+const isPipeTable = (text) => text.includes(" | ") && /[A-D]\.\s/.test(text);
+
+// Detects old "List I / List II" inline text format
+const isMatchingQuestion = (text) => {
+  return /list[\s-]?i\b/i.test(text) && /list[\s-]?ii\b/i.test(text);
+};
+
+// Parse pipe-separated table format:
+// "List I (heading) | List II (heading)\nA. item | 1. item\nB. item | 2. item"
+const parsePipeTable = (text) => {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  let header1 = "List I",
+    header2 = "List II";
+  const rows = [];
+  let questionLine = "";
+
+  for (const line of lines) {
+    if (line.includes("|")) {
+      const parts = line.split("|").map((p) => p.trim());
+      if (/^[A-D]\.\s/i.test(parts[0]) || /^\d+\.\s/.test(parts[0])) {
+        // Data row: "A. item | 1. item"
+        const left = parts[0].replace(/^[A-D]\.\s*/i, "").trim();
+        const right = parts[1]?.replace(/^\d+\.\s*/, "").trim() || "";
+        const leftLabel =
+          parts[0].match(/^([A-D])\./i)?.[1]?.toUpperCase() || "";
+        const rightLabel = parts[1]?.match(/^(\d+)\./)?.[1] || "";
+        rows.push({ leftLabel, left, rightLabel, right });
+      } else {
+        // Header row
+        header1 = parts[0] || "List I";
+        header2 = parts[1] || "List II";
+      }
+    } else if (/how many|which of|select the|correctly matched/i.test(line)) {
+      questionLine = line;
+    }
+  }
+
+  return { header1, header2, rows, questionLine };
+};
+
+// Parse old inline format: "List I: A) X, B) Y ... List II: a) p, b) q"
+const parseInlineLists = (text) => {
+  const list1Match = text.match(/list[\s-]?i[:\s]+([^.]*?)(?=list[\s-]?ii)/i);
+  const list2Match = text.match(
+    /list[\s-]?ii[:\s]+([^.]*?)(?=which|how many|$)/i
+  );
+
+  const parseItems = (str) => {
+    if (!str) return [];
+    const items = [];
+    const regex =
+      /([A-Da-d1-4])[).]\s*([^,A-Da-d1-4)]+?)(?=[,;]?\s*[A-Da-d1-4][).]|$)/g;
+    let match;
+    while ((match = regex.exec(str)) !== null) {
+      items.push({ label: match[1].toUpperCase(), text: match[2].trim() });
+    }
+    return items;
+  };
+
+  return {
+    list1Items: parseItems(list1Match?.[1] || ""),
+    list2Items: parseItems(list2Match?.[1] || ""),
+  };
+};
+
+// Renders the intro text before any table
+function QuestionIntro({ text }) {
+  const intro = text.split("\n")[0];
+  if (!intro || /list[\s-]?i\b/i.test(intro) || intro.includes("|"))
+    return null;
+  return (
+    <div
+      style={{
+        fontSize: "0.9rem",
+        color: "#fff",
+        lineHeight: 1.6,
+        fontWeight: 500,
+        marginBottom: 10,
+      }}
+    >
+      {intro}
+    </div>
+  );
+}
+
+// Main smart question renderer
+function SmartQuestionDisplay({ question }) {
+  // Get preamble (line before any table)
+  const lines = question
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const preambleLines = [];
+  let tableStarted = false;
+  let bottomLine = "";
+  for (const line of lines) {
+    if (
+      !tableStarted &&
+      !line.includes("|") &&
+      !/^[A-D]\.\s/i.test(line) &&
+      !/list[\s-]?i\b/i.test(line)
+    ) {
+      if (/how many|which of|select the|correctly matched/i.test(line)) {
+        bottomLine = line;
+      } else preambleLines.push(line);
+    } else {
+      tableStarted = true;
+    }
+  }
+
+  // Case 1: Pipe table format
+  if (isPipeTable(question)) {
+    const { header1, header2, rows, questionLine } = parsePipeTable(question);
+    return (
+      <div>
+        {preambleLines.length > 0 && (
+          <div
+            style={{
+              fontSize: "0.9rem",
+              color: "#fff",
+              lineHeight: 1.6,
+              fontWeight: 500,
+              marginBottom: 10,
+            }}
+          >
+            {preambleLines.join(" ")}
+          </div>
+        )}
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            marginBottom: 10,
+            fontSize: "0.82rem",
+          }}
+        >
+          <thead>
+            <tr>
+              <td
+                style={{
+                  background: "#1a3a2a",
+                  color: "#10a37f",
+                  padding: "7px 10px",
+                  border: "1px solid #10a37f40",
+                  fontWeight: 700,
+                  fontSize: "0.72rem",
+                  letterSpacing: 0.8,
+                }}
+              >
+                {header1}
+              </td>
+              <td
+                style={{
+                  background: "#1a2a3a",
+                  color: "#60a5fa",
+                  padding: "7px 10px",
+                  border: "1px solid #60a5fa40",
+                  fontWeight: 700,
+                  fontSize: "0.72rem",
+                  letterSpacing: 0.8,
+                }}
+              >
+                {header2}
+              </td>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i}>
+                <td
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #2a2a2a",
+                    color: "#ddd",
+                    background: "#1e2e24",
+                    verticalAlign: "top",
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "#10a37f",
+                      fontWeight: 700,
+                      marginRight: 6,
+                    }}
+                  >
+                    {row.leftLabel}.
+                  </span>
+                  {row.left}
+                </td>
+                <td
+                  style={{
+                    padding: "8px 10px",
+                    border: "1px solid #2a2a2a",
+                    color: "#ddd",
+                    background: "#1e242e",
+                    verticalAlign: "top",
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "#60a5fa",
+                      fontWeight: 700,
+                      marginRight: 6,
+                    }}
+                  >
+                    {row.rightLabel}.
+                  </span>
+                  {row.right}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {(questionLine || bottomLine) && (
+          <div
+            style={{ fontSize: "0.85rem", color: "#bbb", fontStyle: "italic" }}
+          >
+            {questionLine || bottomLine}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Case 2: Old inline List I / List II format
+  if (isMatchingQuestion(question)) {
+    const { list1Items, list2Items } = parseInlineLists(question);
+    const questionText =
+      question.match(/(which of the following[^?]*\?|how many[^?]*\?)/i)?.[0] ||
+      "";
+    const list1Header =
+      question.match(/list[\s-]?i\s*\(([^)]+)\)/i)?.[1] || "List I";
+    const list2Header =
+      question.match(/list[\s-]?ii\s*\(([^)]+)\)/i)?.[1] || "List II";
+
+    if (list1Items.length > 0 && list2Items.length > 0) {
+      const maxRows = Math.max(list1Items.length, list2Items.length);
+      const intro = question.split(/list[\s-]?i\b/i)[0].trim();
+      return (
+        <div>
+          {intro && (
+            <div
+              style={{
+                fontSize: "0.9rem",
+                color: "#fff",
+                lineHeight: 1.6,
+                fontWeight: 500,
+                marginBottom: 10,
+              }}
+            >
+              {intro}
+            </div>
+          )}
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              marginBottom: 10,
+              fontSize: "0.82rem",
+            }}
+          >
+            <thead>
+              <tr>
+                <td
+                  style={{
+                    background: "#1a3a2a",
+                    color: "#10a37f",
+                    padding: "7px 10px",
+                    border: "1px solid #10a37f40",
+                    fontWeight: 700,
+                    fontSize: "0.72rem",
+                  }}
+                >
+                  LIST I{list1Header !== "List I" ? ` (${list1Header})` : ""}
+                </td>
+                <td
+                  style={{
+                    background: "#1a2a3a",
+                    color: "#60a5fa",
+                    padding: "7px 10px",
+                    border: "1px solid #60a5fa40",
+                    fontWeight: 700,
+                    fontSize: "0.72rem",
+                  }}
+                >
+                  LIST II{list2Header !== "List II" ? ` (${list2Header})` : ""}
+                </td>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: maxRows }).map((_, i) => (
+                <tr key={i}>
+                  <td
+                    style={{
+                      padding: "8px 10px",
+                      border: "1px solid #2a2a2a",
+                      color: "#ddd",
+                      background: "#1e2e24",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: "#10a37f",
+                        fontWeight: 700,
+                        marginRight: 6,
+                      }}
+                    >
+                      {list1Items[i]?.label}
+                    </span>
+                    {list1Items[i]?.text}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 10px",
+                      border: "1px solid #2a2a2a",
+                      color: "#ddd",
+                      background: "#1e242e",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: "#60a5fa",
+                        fontWeight: 700,
+                        marginRight: 6,
+                      }}
+                    >
+                      {list2Items[i]?.label}
+                    </span>
+                    {list2Items[i]?.text}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {questionText && (
+            <div
+              style={{
+                fontSize: "0.85rem",
+                color: "#bbb",
+                fontStyle: "italic",
+              }}
+            >
+              {questionText}
+            </div>
+          )}
+        </div>
+      );
+    }
+  }
+
+  // Case 3: Statement-based or plain question — render as-is
+  const formatQuestion = (text) => {
+    return text
+      .replace(/(Consider the following statements?:?\s*)/gi, "$1\n")
+      .replace(/(Statement\s+I{1,3}:)/gi, "\n$1")
+      .replace(/(\d+\.\s)/g, "\n\n$1")
+      .replace(
+        /(Which of the statements?|How many of the above|Which one of the following)/gi,
+        "\n$1"
+      )
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  };
+  return (
+    <div
+      style={{
+        fontSize: "0.9rem",
+        color: "#fff",
+        lineHeight: 1.75,
+        fontWeight: 500,
+        whiteSpace: "pre-wrap",
+      }}
+    >
+      {formatQuestion(question)}
+    </div>
+  );
+}
 
 // ── QUIZ SCREEN ───────────────────────────────────────────────────────────────
 function QuizScreen({ exam, onBack, API_URL }) {
@@ -466,16 +850,7 @@ function QuizScreen({ exam, onBack, API_URL }) {
               >
                 Question {current + 1}
               </div>
-              <div
-                style={{
-                  fontSize: "1rem",
-                  color: "#fff",
-                  lineHeight: 1.6,
-                  fontWeight: 500,
-                }}
-              >
-                {q.question}
-              </div>
+              <SmartQuestionDisplay question={q.question} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {q.options.map((opt, idx) => {
@@ -705,7 +1080,10 @@ function QuizScreen({ exam, onBack, API_URL }) {
                             marginBottom: 4,
                           }}
                         >
-                          Q{i + 1}: {questions[i]?.question}
+                          Q{i + 1}:{" "}
+                          <SmartQuestionDisplay
+                            question={questions[i]?.question || ""}
+                          />
                         </div>
                         <div style={{ fontSize: "0.78rem", color: "#e53e3e" }}>
                           ✗ You:{" "}
@@ -876,13 +1254,13 @@ function QuizScreen({ exam, onBack, API_URL }) {
 
 // ── STUDY PLANNER SCREEN ──────────────────────────────────────────────────────
 function PlannerScreen({ exam, onBack, API_URL }) {
-  const [screen, setScreen] = useState("setup");
+  const [screen, setScreen] = useState("setup"); // setup | loading | view | list
   const [examDate, setExamDate] = useState("");
   const [topics, setTopics] = useState("");
   const [hoursPerDay, setHoursPerDay] = useState(4);
   const [plan, setPlan] = useState(null);
   const [savedPlans, setSavedPlans] = useState([]);
-  const [viewMode, setViewMode] = useState("list");
+  const [viewMode, setViewMode] = useState("list"); // list | week
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentWeek, setCurrentWeek] = useState(0);
@@ -989,6 +1367,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
         fontFamily: "'Figtree', sans-serif",
       }}
     >
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -1046,6 +1425,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px" }}>
+        {/* SETUP */}
         {screen === "setup" && (
           <div
             style={{
@@ -1221,6 +1601,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
           </div>
         )}
 
+        {/* LOADING */}
         {screen === "loading" && (
           <div
             style={{
@@ -1252,8 +1633,10 @@ function PlannerScreen({ exam, onBack, API_URL }) {
           </div>
         )}
 
+        {/* VIEW PLAN */}
         {screen === "view" && plan && (
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
+            {/* Plan header */}
             <div
               style={{
                 background: "linear-gradient(135deg, #10a37f20, #0d8a6a10)",
@@ -1302,6 +1685,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                   </span>
                 </div>
               </div>
+              {/* Progress bar */}
               <div
                 style={{
                   marginTop: 12,
@@ -1325,6 +1709,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
               </div>
             </div>
 
+            {/* View mode toggle */}
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               {[
                 ["list", "📋 Day List"],
@@ -1352,6 +1737,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
               ))}
             </div>
 
+            {/* DAY LIST VIEW */}
             {viewMode === "list" && (
               <div
                 style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -1388,6 +1774,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                           gap: 12,
                         }}
                       >
+                        {/* Checkbox */}
                         <button
                           onClick={() => toggleDay(i)}
                           style={{
@@ -1491,6 +1878,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                           >
                             {day.focus}
                           </div>
+                          {/* Topics */}
                           <div
                             style={{
                               display: "flex",
@@ -1514,6 +1902,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
                               </span>
                             ))}
                           </div>
+                          {/* Details */}
                           <div
                             style={{
                               display: "flex",
@@ -1548,6 +1937,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
               </div>
             )}
 
+            {/* WEEKLY VIEW */}
             {viewMode === "week" && (
               <div>
                 <div
@@ -1714,6 +2104,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
           </div>
         )}
 
+        {/* SAVED PLANS LIST */}
         {screen === "list" && (
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div
@@ -1857,7 +2248,7 @@ function PlannerScreen({ exam, onBack, API_URL }) {
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [screen, setScreen] = useState("chat");
+  const [screen, setScreen] = useState("chat"); // chat | quiz | planner
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2261,7 +2652,7 @@ export default function App() {
     >
       <style>{GLOBAL_STYLES}</style>
 
-      {/* SIDEBAR OVERLAY */}
+      {/* SIDEBAR */}
       {showSidebar && (
         <div
           onClick={() => setShowSidebar(false)}
@@ -2273,8 +2664,6 @@ export default function App() {
           }}
         />
       )}
-
-      {/* SIDEBAR */}
       <div
         style={{
           width: showSidebar ? 260 : 0,
@@ -2361,6 +2750,7 @@ export default function App() {
           </button>
         </div>
 
+        {/* Feature buttons in sidebar */}
         <div
           style={{
             padding: "8px 10px 0",
@@ -2670,11 +3060,9 @@ export default function App() {
                     borderRadius: 10,
                     padding: 4,
                     zIndex: 100,
-                    minWidth: 120,
+                    minWidth: 110,
                     boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
                     animation: "fadeIn 0.12s ease",
-                    maxHeight: 320,
-                    overflowY: "auto",
                   }}
                 >
                   {EXAMS.map((e) => (
