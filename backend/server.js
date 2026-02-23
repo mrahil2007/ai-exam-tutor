@@ -23,6 +23,11 @@ if (!process.env.MONGODB_URI) {
   console.error("❌ MONGODB_URI missing!");
   process.exit(1);
 }
+if (!process.env.NEWS_API_KEY) {
+  console.warn(
+    "⚠️  NEWS_API_KEY missing — Current Affairs quiz will use model knowledge only."
+  );
+}
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -40,31 +45,78 @@ const getChats = () => db.collection("chats");
 const getQuizResults = () => db.collection("quiz_results");
 const getPlanners = () => db.collection("study_planners");
 
+// ── NEWSAPI: Fetch latest current affairs context ─
+const fetchNewsContext = async (topic) => {
+  if (!process.env.NEWS_API_KEY) return "";
+  try {
+    // Two parallel searches: topic-specific + India current affairs
+    const [topicRes, indiaRes] = await Promise.all([
+      fetch(
+        `https://newsapi.org/v2/everything?` +
+          new URLSearchParams({
+            q: `${topic} India`,
+            sortBy: "publishedAt",
+            pageSize: 8,
+            language: "en",
+            apiKey: process.env.NEWS_API_KEY,
+          })
+      ),
+      fetch(
+        `https://newsapi.org/v2/everything?` +
+          new URLSearchParams({
+            q: `${topic} government policy scheme`,
+            sortBy: "relevancy",
+            pageSize: 5,
+            language: "en",
+            apiKey: process.env.NEWS_API_KEY,
+          })
+      ),
+    ]);
+
+    const [topicData, indiaData] = await Promise.all([
+      topicRes.json(),
+      indiaRes.json(),
+    ]);
+
+    // Merge and deduplicate articles by title
+    const seen = new Set();
+    const allArticles = [
+      ...(topicData.articles || []),
+      ...(indiaData.articles || []),
+    ].filter((a) => {
+      if (!a.title || a.title === "[Removed]") return false;
+      if (seen.has(a.title)) return false;
+      seen.add(a.title);
+      return true;
+    });
+
+    if (!allArticles.length) return "";
+
+    // Build a clean numbered context block
+    const lines = allArticles
+      .slice(0, 10)
+      .map((a, i) => {
+        const date = a.publishedAt ? `[${a.publishedAt.slice(0, 10)}] ` : "";
+        const desc = (a.description || a.content || "")
+          .slice(0, 200)
+          .replace(/\n/g, " ")
+          .trim();
+        return `${i + 1}. ${date}${a.title}${desc ? " — " + desc : ""}`;
+      })
+      .join("\n");
+
+    return `RECENT NEWS ITEMS (fetched live from the internet):\n${lines}`;
+  } catch (err) {
+    console.warn("NewsAPI error:", err.message);
+    return ""; // graceful fallback — quiz still generates without context
+  }
+};
+
 // ── EXAM-AWARE QUIZ PROMPT ────────────────────────
-const getQuizPrompt = (exam, topic, count) => {
-  const examInstructions = {
-    UPSC: `
-You are a UPSC Civil Services Preliminary Examination question setter.
-
-Your task is to generate questions STRICTLY based on:
-
-1. UPSC Prelims General Studies Paper I PYQs from 2014–2023
-2. NCERT textbooks from Class 6 to Class 12 ONLY
-   - Polity: Class 8–12 NCERT
-   - History: Class 6–12 NCERT
-   - Geography: Class 6–12 NCERT
-   - Economy: Class 9–12 NCERT
-   - Environment: Class 7–12 NCERT
-   - Science: Class 6–12 NCERT basics
-
-ABSOLUTE CONTENT RESTRICTIONS:
-- DO NOT invent Articles, Acts, committees, or schemes.
-- DO NOT use coaching institute material.
-- DO NOT create imaginary constitutional provisions.
-- Every fact must be verifiable from NCERT or real UPSC PYQs (2014–2025).
-- If unsure, avoid that fact.
-
-STYLE REQUIREMENTS (MUST MIRROR REAL UPSC):
+const getQuizPrompt = (exam, topic, count, contextBlock = "") => {
+  // Shared UPSC GS1-style format rules
+  const upscGS1Formats = `
+STYLE REQUIREMENTS (MUST MIRROR REAL UPSC GS PAPER I):
 
 FORMAT 1 — STATEMENT-BASED (60% minimum)
 "Consider the following statements:
@@ -74,65 +126,158 @@ FORMAT 1 — STATEMENT-BASED (60% minimum)
 Which of the statements given above is/are correct?"
 
 Options:
-A) 1 only  
-B) 1 and 2 only  
-C) 2 and 3 only  
-D) 1, 2 and 3  
+A) 1 only
+B) 1 and 2 only
+C) 2 and 3 only
+D) 1, 2 and 3
 
 Rules:
 - At least ONE statement must be subtly incorrect.
-- Statements must test conceptual clarity.
-- Avoid trivial factual recall.
+- Statements must test conceptual clarity, not trivial recall.
 
 FORMAT 2 — STATEMENT I / STATEMENT II (20%)
-Use exact 4-option structure used in UPSC:
-A) Both correct and II explains I  
-B) Both correct but II does not explain I  
-C) I correct but II incorrect  
-D) I incorrect but II correct  
+A) Both Statement I and II are correct and Statement II explains Statement I
+B) Both Statement I and II are correct but Statement II does NOT explain Statement I
+C) Statement I is correct but Statement II is incorrect
+D) Statement I is incorrect but Statement II is correct
 
 FORMAT 3 — MATCH LIST I / LIST II (10%)
-
-You MUST generate match questions in STRICT pipe-table format like this:
+Use STRICT pipe-table format:
 
 List I | List II
-A. Inflation | 1. Rise in general price level
-B. Deflation | 2. Fall in general price level
-C. Stagflation | 3. Rise in price level with unemployment
+A. Term/Item | 1. Description/Match
+B. Term/Item | 2. Description/Match
+C. Term/Item | 3. Description/Match
 
-Then ask:
-"How many of the above pairs are correctly matched?"
-
-Options:
-A) Only one
-B) Only two
-C) Only three
-D) All three
+Then ask: "How many of the above pairs are correctly matched?"
+Options: A) Only one  B) Only two  C) Only three  D) All three
 
 STRICT RULES:
-- ALWAYS use pipe symbol (|)
-- ALWAYS keep exactly one space before and after |
-- ALWAYS label left column as A., B., C.
-- ALWAYS label right column as 1., 2., 3.
-- NEVER write inline paragraph format
-- NEVER mix List II in same sentence as List I
+- ALWAYS use pipe symbol (|) with one space on each side
+- Label left column A., B., C. and right column 1., 2., 3.
+- NEVER write inline or paragraph format for match questions
 
 FORMAT 4 — DIRECT (10%)
-One precise conceptual question.
+One precise factual/conceptual question with 4 distinct options.
 
-DIFFICULTY DISTRIBUTION:
-- 50% Moderate (elimination-based)
-- 40% Hard (requires deep conceptual clarity)
-- 10% Easy (NCERT factual base)
+DIFFICULTY: 50% Moderate, 40% Hard, 10% Easy
+NEVER use "All of the above" or "None of the above" as options.
+Mimic real UPSC PYQ style (2014–2025). Do NOT copy exact PYQs.
+`;
 
-MOST IMPORTANT:
-- Mimic structure of real UPSC PYQs (2014–2023)
-- Do NOT copy exact PYQs.
-- Generate NEW questions in similar framing style.
+  const examInstructions = {
+    // ── UPSC GS PAPER I ───────────────────────────
+    UPSC: `
+You are a UPSC Civil Services Preliminary Examination question setter for GS Paper I.
 
-Topic to generate questions from: "${topic}"
+Generate questions STRICTLY based on:
+1. UPSC Prelims GS Paper I PYQs (2014–2025)
+2. NCERT textbooks Class 6–12:
+   - Polity: Class 8–12
+   - History: Class 6–12
+   - Geography: Class 6–12
+   - Economy: Class 9–12
+   - Environment & Ecology: Class 7–12
+   - Science & Technology: Class 6–12 basics
+
+ABSOLUTE RESTRICTIONS:
+- DO NOT invent Articles, Acts, committees, or schemes.
+- DO NOT use coaching institute material.
+- Every fact must be verifiable from NCERT or real UPSC PYQs.
+- If unsure about a fact, skip it.
+
+Topic: "${topic}"
+${upscGS1Formats}`,
+
+    // ── UPSC CSAT / GS PAPER II ───────────────────
+    CSAT: `
+You are a UPSC Civil Services Preliminary Examination question setter for GS Paper II — CSAT (Civil Services Aptitude Test).
+
+Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2025).
+
+TOPIC REQUESTED: "${topic}"
+
+Cover a MIX from these CSAT areas based on the topic:
+
+1. READING COMPREHENSION
+   - Provide a short passage (5–8 lines) followed by 1 inference/conclusion question.
+   - Passage must be original. Test ability to draw conclusions, identify assumptions, find the author's view.
+   - Questions must be answerable ONLY from the passage — no external knowledge needed.
+
+2. LOGICAL REASONING & ANALYTICAL ABILITY
+   - Syllogisms, logical sequences, assumptions, arguments
+   - Blood relations, direction sense, ranking/ordering puzzles
+   - Coding-decoding, series completion (number/letter/mixed)
+   - Statement-conclusion, statement-assumption, course of action
+
+3. DECISION MAKING & PROBLEM SOLVING
+   - Situation-based questions (administrative/ethical scenarios)
+   - Ask what the BEST course of action is among 4 realistic options
+   - Only one option is clearly the best
+
+4. BASIC NUMERACY (Class X level)
+   - Number systems, percentages, ratios & proportions
+   - Simple & compound interest, profit & loss, time & work
+   - Time-speed-distance, averages, ages
+   - ALWAYS include actual numbers in the question
+   - Explanation MUST show full step-by-step calculation
+
+5. DATA INTERPRETATION (Class X level)
+   - Describe a small table or chart in text with actual values
+   - Ask 1 question on the data (percentage change, ratio, highest/lowest, etc.)
+
+6. GENERAL MENTAL ABILITY
+   - Analogies, odd-one-out, visual/spatial reasoning described in text
+   - Pattern completion, matrix-type questions described in words
+
+STRICT RULES:
+- Every numerical answer must be uniquely correct and verifiable by calculation.
+- For comprehension: passage must come FIRST in the question field, then the question.
+- Options for logical/aptitude questions must be precise (exact numbers or conclusions).
+- DIFFICULTY: 50% Moderate, 50% Hard — no easy questions.
+- NEVER use "All of the above" or "None of the above".
+- Explanation must show full working/reasoning for every question.
+- Do NOT repeat question types — mix all 6 categories evenly.
 `,
 
+    // ── CURRENT AFFAIRS (NewsAPI-powered) ─────────
+    "Current Affairs": `
+You are a UPSC Civil Services Preliminary Examination question setter specialising in Current Affairs.
+
+You have been provided with REAL, FRESH news fetched live from the internet right now.
+Use this context as the PRIMARY source for generating questions.
+Do NOT rely on your training data for facts — trust the context below instead.
+
+Topic: "${topic}"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LIVE CONTEXT FROM THE WEB:
+${
+  contextBlock ||
+  "⚠️ No live context available — use your best known recent facts on this topic for UPSC."
+}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+INSTRUCTIONS:
+1. Extract specific facts, names, dates, numbers, and events from the context above.
+2. Build UPSC-style MCQ questions around those facts.
+3. Every question must be directly traceable to the context provided.
+4. If the context mentions an index, rank, scheme, treaty, summit, or appointment — make a question on it.
+5. Wrong options (distractors) must be plausible but clearly incorrect based on the context.
+6. Explanation must reference the specific fact from the context and explain why it matters for UPSC.
+
+COVER THESE DIMENSIONS as relevant to the topic:
+- Government schemes, policies, bills, and appointments
+- International relations, treaties, summits, global institutions (UN, IMF, WB, WTO, WHO)
+- Economy & Finance — RBI decisions, budget, indices
+- Science & Technology — Space (ISRO), defence, AI/digital, health
+- Environment & Ecology — Climate summits, endangered species, national parks
+- Sports & Culture — Awards (Padma, Nobel), UNESCO heritage
+- India & World Rankings — Global indices (HDI, Press Freedom, Hunger Index, etc.)
+
+${upscGS1Formats}`,
+
+    // ── JEE ───────────────────────────────────────
     JEE: `
 You are a JEE Main/Advanced question setter. Generate challenging questions on "${topic}".
 
@@ -150,6 +295,7 @@ STRICT RULES:
 - Show the key formula or concept in explanation
 `,
 
+    // ── NEET ──────────────────────────────────────
     NEET: `
 You are a NEET UG question setter. Generate questions on "${topic}" strictly from NCERT syllabus.
 
@@ -167,6 +313,7 @@ STRICT RULES:
 - Mention NCERT chapter in explanation
 `,
 
+    // ── CAT ───────────────────────────────────────
     CAT: `
 You are a CAT question setter. Generate CAT-level questions on "${topic}".
 
@@ -182,6 +329,7 @@ STRICT RULES:
 - 60% hard, 40% medium
 `,
 
+    // ── SSC ───────────────────────────────────────
     SSC: `
 You are an SSC CGL/CHSL question setter. Generate questions on "${topic}".
 
@@ -193,6 +341,7 @@ RULES:
 - 40% hard, 60% medium
 `,
 
+    // ── Banking ───────────────────────────────────
     Banking: `
 You are an IBPS/SBI PO question setter. Generate questions on "${topic}".
 
@@ -205,10 +354,11 @@ RULES:
 - 50% hard, 50% medium
 `,
 
+    // ── GATE ──────────────────────────────────────
     GATE: `
 You are a GATE question setter. Generate technical questions on "${topic}".
 
-Mix: 
+Mix:
 1. Numerical Answer Type (give 4 close numerical options)
 2. Concept application requiring derivation
 3. Multi-step technical problems
@@ -220,6 +370,7 @@ RULES:
 - 60% hard, 40% medium
 `,
 
+    // ── General ───────────────────────────────────
     General: `
 Generate clear, well-structured MCQ questions on "${topic}".
 Mix easy, medium and hard difficulty. Make distractors plausible but clearly distinguishable.
@@ -229,9 +380,8 @@ Explanation should be educational and 2-3 sentences.
 
   const instruction = examInstructions[exam] || examInstructions["General"];
 
-  // For UPSC: build a mandatory per-question format assignment
-  const buildFormatPlan = (n) => {
-    // Pattern per 10 questions: 6 statement-based, 2 statement-I/II, 1 match-list, 1 direct
+  // Build mandatory per-question format plan for UPSC GS1 and Current Affairs
+  const buildGS1FormatPlan = (n) => {
     const pattern = [
       "STATEMENT-BASED",
       "MATCH-LIST",
@@ -251,19 +401,54 @@ Explanation should be educational and 2-3 sentences.
       .join("\n");
   };
 
-  const formatPlan =
-    exam === "UPSC"
-      ? `
-MANDATORY FORMAT ASSIGNMENT — YOU MUST FOLLOW THIS EXACTLY, NO EXCEPTIONS:
-${buildFormatPlan(count)}
+  // Build mandatory CSAT format plan
+  const buildCSATFormatPlan = (n) => {
+    const pattern = [
+      "READING-COMPREHENSION",
+      "LOGICAL-REASONING",
+      "NUMERACY",
+      "DATA-INTERPRETATION",
+      "DECISION-MAKING",
+      "LOGICAL-REASONING",
+      "MENTAL-ABILITY",
+      "NUMERACY",
+      "READING-COMPREHENSION",
+      "LOGICAL-REASONING",
+    ];
+    const plan = [];
+    for (let i = 0; i < n; i++) plan.push(pattern[i % pattern.length]);
+    return plan
+      .map((fmt, i) => `Question ${i + 1}: MUST be ${fmt} format`)
+      .join("\n");
+  };
+
+  let formatPlan = "";
+
+  if (exam === "UPSC" || exam === "Current Affairs") {
+    formatPlan = `
+MANDATORY FORMAT ASSIGNMENT — FOLLOW EXACTLY, NO EXCEPTIONS:
+${buildGS1FormatPlan(count)}
 
 WHAT EACH FORMAT MEANS:
-- STATEMENT-BASED: Start with "Consider the following statements:" then numbered statements 1. 2. 3., end with "Which of the statements given above is/are correct?" with options like "1 only", "1 and 2 only", "2 and 3 only", "1, 2 and 3"
-- STATEMENT-I/II: Start with "Consider the following statements: Statement I: ... Statement II: ..." then 4 fixed options about whether both are correct and whether II explains I
-- MATCH-LIST: Two column table with List I and List II items to match, ask "How many pairs correctly matched?"
+- STATEMENT-BASED: "Consider the following statements: 1. ... 2. ... 3. ..." → "Which of the statements given above is/are correct?" with options like "1 only", "1 and 2 only", "2 and 3 only", "1, 2 and 3"
+- STATEMENT-I/II: "Statement I: ... Statement II: ..." → 4 fixed options about correctness and whether II explains I
+- MATCH-LIST: Two-column pipe-table (List I | List II) → "How many pairs are correctly matched?" with "Only one / Only two / Only three / All three"
 - DIRECT: Single precise factual question with 4 distinct answer options
-`
-      : "";
+`;
+  } else if (exam === "CSAT") {
+    formatPlan = `
+MANDATORY FORMAT ASSIGNMENT — FOLLOW EXACTLY, NO EXCEPTIONS:
+${buildCSATFormatPlan(count)}
+
+WHAT EACH FORMAT MEANS:
+- READING-COMPREHENSION: Write a short passage (5–8 lines) in the question field, then ask ONE inference/conclusion question about it
+- LOGICAL-REASONING: Syllogism, coding-decoding, series, blood relation, direction sense, or statement-conclusion puzzle
+- NUMERACY: A word problem with actual numbers requiring calculation (%, ratio, SI/CI, profit-loss, time-work, speed-distance)
+- DATA-INTERPRETATION: Describe a small table or chart in text with actual numbers, then ask ONE analytical question on it
+- DECISION-MAKING: An administrative or ethical situation with 4 realistic response options — only one is clearly best
+- MENTAL-ABILITY: Analogy, odd-one-out, pattern, or matrix question described in words
+`;
+  }
 
   return `${instruction}${formatPlan}
 
@@ -276,15 +461,15 @@ Format:
     "question": "Full question text here",
     "options": ["A) option1", "B) option2", "C) option3", "D) option4"],
     "correct": 0,
-    "explanation": "Detailed explanation citing the specific fact/article/law/chapter that makes this correct and why others are wrong.",
-    "questionType": "statement-based | statement-I-II | match-list | direct"
+    "explanation": "Detailed explanation with specific citations, calculations, or reasoning. Minimum 2–3 sentences.",
+    "questionType": "statement-based | statement-I-II | match-list | direct | comprehension | logical | numeracy | data-interpretation | decision-making | mental-ability | current-affairs"
   }
 ]
 
 - "correct" is the 0-based index (0=A, 1=B, 2=C, 3=D)
-- Explanation must be minimum 2-3 sentences with specific citations
+- Explanation must cite the specific fact/law/chapter/calculation that makes it correct and why others are wrong
 - Return exactly ${count} questions, no more, no less
-- For UPSC: NEVER use "All of the above" or "None of the above" as options`;
+- NEVER use "All of the above" or "None of the above" as options`;
 };
 
 // ── BASIC ─────────────────────────────────────────
@@ -389,7 +574,23 @@ app.post("/chat", async (req, res) => {
 app.post("/quiz/generate", async (req, res) => {
   const { topic, exam = "General", count = 10 } = req.body;
   if (!topic) return res.status(400).json({ error: "Topic is required" });
-  const prompt = getQuizPrompt(exam, topic, count);
+
+  // ✅ Fetch live NewsAPI context ONLY for Current Affairs
+  let contextBlock = "";
+  if (exam === "Current Affairs") {
+    console.log(`📰 Fetching NewsAPI context for: "${topic}"`);
+    contextBlock = await fetchNewsContext(topic);
+    if (contextBlock) {
+      console.log("✅ NewsAPI context fetched successfully");
+    } else {
+      console.warn(
+        "⚠️  NewsAPI returned no context — falling back to model knowledge"
+      );
+    }
+  }
+
+  const prompt = getQuizPrompt(exam, topic, count, contextBlock);
+
   try {
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -403,16 +604,35 @@ app.post("/quiz/generate", async (req, res) => {
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.4,
-          max_tokens: 4096,
+          // Use more tokens for Current Affairs since prompt is larger with news context
+          max_tokens: exam === "Current Affairs" ? 6000 : 4096,
         }),
       }
     );
+
+    // ✅ Guard: check HTTP status first
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(
+        errData.error?.message || `Groq API error: ${response.status}`
+      );
+    }
+
     const data = await response.json();
+
+    // ✅ Guard: check content exists before calling .replace()
     const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) throw new Error("Empty response from AI");
+
     const jsonStr = content.replace(/```json|```/g, "").trim();
     const questions = JSON.parse(jsonStr);
     if (!Array.isArray(questions)) throw new Error("Invalid format");
-    res.json({ questions });
+
+    res.json({
+      questions,
+      // Let the frontend know if live context was used
+      contextUsed: exam === "Current Affairs" && !!contextBlock,
+    });
   } catch (err) {
     console.error("Quiz error:", err.message);
     res.status(500).json({ error: "Failed to generate quiz." });
