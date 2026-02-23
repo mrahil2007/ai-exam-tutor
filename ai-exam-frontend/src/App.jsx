@@ -41,9 +41,15 @@ const getUserId = () => {
   return userId;
 };
 
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const EXAMS = [
   "General",
   "UPSC",
+  "CSAT",
+  "Current Affairs",
+  "State PCS",
+  "CBSE 10th",
+  "CBSE 12th",
   "JEE",
   "NEET",
   "SSC",
@@ -51,12 +57,57 @@ const EXAMS = [
   "GATE",
   "CAT",
 ];
+
+// List of states for State PCS dropdown
+const STATE_PCS_LIST = [
+  "Uttar Pradesh (UPPSC)",
+  "Bihar (BPSC)",
+  "Madhya Pradesh (MPPSC)",
+  "Rajasthan (RPSC)",
+  "Jharkhand (JPSC)",
+  "Uttarakhand (UKPSC)",
+  "Haryana (HPSC)",
+  "Punjab (PPSC)",
+  "Maharashtra (MPSC)",
+  "Karnataka (KPSC)",
+  "Tamil Nadu (TNPSC)",
+  "Andhra Pradesh (APPSC)",
+  "Telangana (TSPSC)",
+  "Odisha (OPSC)",
+  "West Bengal (WBPSC)",
+  "Gujarat (GPSC)",
+  "Himachal Pradesh (HPPSC)",
+  "Chhattisgarh (CGPSC)",
+];
+
+// Topic placeholder per exam type
+const TOPIC_PLACEHOLDERS = {
+  General: "e.g. Photosynthesis, Indian History...",
+  UPSC: "e.g. Indian Polity, Medieval History, Geography...",
+  CSAT: "e.g. Logical Reasoning, Data Interpretation...",
+  "Current Affairs": "e.g. India-China Relations, Union Budget 2025...",
+  "State PCS": "e.g. History, Geography, Economy, Art & Culture...",
+  "CBSE 10th": "e.g. Triangles, Chemical Reactions, Nationalism...",
+  "CBSE 12th": "e.g. Integration, Electrochemistry, Genetics...",
+  JEE: "e.g. Kinematics, Organic Chemistry, Calculus...",
+  NEET: "e.g. Cell Biology, Human Physiology, Genetics...",
+  SSC: "e.g. Reasoning, Profit & Loss, English Grammar...",
+  Banking: "e.g. Seating Arrangement, Data Interpretation...",
+  GATE: "e.g. Data Structures, Control Systems...",
+  CAT: "e.g. Reading Comprehension, Percentages...",
+};
+
 const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
 const USER_ID = getUserId();
 
 const EXAM_META = {
   General: { icon: "💬", color: "#10a37f", desc: "All subjects" },
   UPSC: { icon: "🏛️", color: "#f59e0b", desc: "Civil Services" },
+  CSAT: { icon: "🧮", color: "#a78bfa", desc: "GS Paper II" },
+  "Current Affairs": { icon: "📰", color: "#38bdf8", desc: "Latest events" },
+  "State PCS": { icon: "🗺️", color: "#fb923c", desc: "State exams" },
+  "CBSE 10th": { icon: "📗", color: "#34d399", desc: "Class 10 Board" },
+  "CBSE 12th": { icon: "📘", color: "#60a5fa", desc: "Class 12 Board" },
   JEE: { icon: "⚡", color: "#3b82f6", desc: "Engineering" },
   NEET: { icon: "🧬", color: "#ec4899", desc: "Medical" },
   SSC: { icon: "📋", color: "#8b5cf6", desc: "Staff Selection" },
@@ -68,10 +119,9 @@ const EXAM_META = {
 // ── SPLASH SCREEN ─────────────────────────────────────────────────────────────
 function SplashScreen({ onDone }) {
   useEffect(() => {
-    const timer = setTimeout(onDone, 2200);
-    return () => clearTimeout(timer);
+    const t = setTimeout(onDone, 2200);
+    return () => clearTimeout(t);
   }, []);
-
   return (
     <div
       style={{
@@ -87,15 +137,12 @@ function SplashScreen({ onDone }) {
       }}
     >
       <style>{`
-        @keyframes splashPulse { 0%,100%{transform:scale(1);filter:brightness(1)} 50%{transform:scale(1.12);filter:brightness(1.3)} }
-        @keyframes splashRing { 0%{transform:scale(0.6);opacity:0.8} 100%{transform:scale(2.2);opacity:0} }
-        @keyframes splashText { 0%{opacity:0;transform:translateY(16px)} 100%{opacity:1;transform:translateY(0)} }
-        @keyframes splashTagline { 0%{opacity:0;letter-spacing:6px} 100%{opacity:0.5;letter-spacing:2px} }
-        @keyframes splashBar { 0%{width:0%} 100%{width:100%} }
-        @keyframes splashFade { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+        @keyframes splashPulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.12);filter:brightness(1.3)}}
+        @keyframes splashRing{0%{transform:scale(0.6);opacity:0.8}100%{transform:scale(2.2);opacity:0}}
+        @keyframes splashText{0%{opacity:0;transform:translateY(16px)}100%{opacity:1;transform:translateY(0)}}
+        @keyframes splashTagline{0%{opacity:0;letter-spacing:6px}100%{opacity:0.5;letter-spacing:2px}}
+        @keyframes splashBar{0%{width:0%}100%{width:100%}}
       `}</style>
-
-      {/* Background mesh */}
       <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
         <div
           style={{
@@ -106,13 +153,11 @@ function SplashScreen({ onDone }) {
             width: 400,
             height: 400,
             background:
-              "radial-gradient(circle, rgba(16,163,127,0.2) 0%, transparent 70%)",
+              "radial-gradient(circle,rgba(16,163,127,0.2) 0%,transparent 70%)",
             filter: "blur(60px)",
           }}
         />
       </div>
-
-      {/* Pulse rings */}
       <div
         style={{
           position: "relative",
@@ -124,15 +169,15 @@ function SplashScreen({ onDone }) {
           marginBottom: 28,
         }}
       >
-        {[0, 300, 600].map((delay) => (
+        {[0, 300, 600].map((d) => (
           <div
-            key={delay}
+            key={d}
             style={{
               position: "absolute",
               inset: 0,
               borderRadius: "50%",
               border: "2px solid rgba(16,163,127,0.5)",
-              animation: `splashRing 1.6s ease-out ${delay}ms infinite`,
+              animation: `splashRing 1.6s ease-out ${d}ms infinite`,
             }}
           />
         ))}
@@ -141,7 +186,7 @@ function SplashScreen({ onDone }) {
             width: 90,
             height: 90,
             borderRadius: 24,
-            background: "linear-gradient(135deg, #10a37f, #0d6b5e)",
+            background: "linear-gradient(135deg,#10a37f,#0d6b5e)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -153,7 +198,6 @@ function SplashScreen({ onDone }) {
           🎓
         </div>
       </div>
-
       <div style={{ animation: "splashText 0.5s ease 0.3s both" }}>
         <div
           style={{
@@ -180,8 +224,6 @@ function SplashScreen({ onDone }) {
       >
         Your Smart Study Partner
       </div>
-
-      {/* Loading bar */}
       <div
         style={{
           width: 140,
@@ -194,7 +236,7 @@ function SplashScreen({ onDone }) {
         <div
           style={{
             height: "100%",
-            background: "linear-gradient(90deg, #10a37f, #0dd9a7)",
+            background: "linear-gradient(90deg,#10a37f,#0dd9a7)",
             borderRadius: 2,
             animation: "splashBar 1.8s ease forwards",
           }}
@@ -206,8 +248,9 @@ function SplashScreen({ onDone }) {
 
 // ── EXAM SELECT SCREEN ────────────────────────────────────────────────────────
 function ExamSelectScreen({ onSelect, currentExam }) {
-  const savedExam = localStorage.getItem("examai_exam") || null;
-  const [selected, setSelected] = useState(savedExam);
+  const [selected, setSelected] = useState(
+    localStorage.getItem("examai_exam") || null
+  );
   const [leaving, setLeaving] = useState(false);
 
   const handleSelect = (e) => {
@@ -239,14 +282,12 @@ function ExamSelectScreen({ onSelect, currentExam }) {
     >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
-        @keyframes examCardIn { from{opacity:0;transform:translateY(24px) scale(0.95)} to{opacity:1;transform:translateY(0) scale(1)} }
-        @keyframes examTitleIn { from{opacity:0;transform:translateY(-20px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes glowPulse { 0%,100%{opacity:0.4} 50%{opacity:0.7} }
-        .exam-card-btn { transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1); }
-        .exam-card-btn:active { transform: scale(0.92) !important; }
+        @keyframes examCardIn{from{opacity:0;transform:translateY(24px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
+        @keyframes examTitleIn{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes glowPulse{0%,100%{opacity:0.4}50%{opacity:0.7}}
+        .exam-card-btn{transition:all 0.2s cubic-bezier(0.34,1.56,0.64,1);position:relative;}
+        .exam-card-btn:active{transform:scale(0.92)!important;}
       `}</style>
-
-      {/* BG glow */}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none" }}>
         <div
           style={{
@@ -256,7 +297,7 @@ function ExamSelectScreen({ onSelect, currentExam }) {
             width: 300,
             height: 300,
             background:
-              "radial-gradient(circle, rgba(16,163,127,0.15), transparent 70%)",
+              "radial-gradient(circle,rgba(16,163,127,0.15),transparent 70%)",
             filter: "blur(80px)",
             animation: "glowPulse 3s ease infinite",
           }}
@@ -269,26 +310,24 @@ function ExamSelectScreen({ onSelect, currentExam }) {
             width: 250,
             height: 250,
             background:
-              "radial-gradient(circle, rgba(99,102,241,0.1), transparent 70%)",
+              "radial-gradient(circle,rgba(99,102,241,0.1),transparent 70%)",
             filter: "blur(80px)",
             animation: "glowPulse 4s ease 1s infinite",
           }}
         />
       </div>
-
       <div
         style={{
           width: "100%",
-          maxWidth: 480,
+          maxWidth: 500,
           padding: "40px 20px 30px",
           position: "relative",
         }}
       >
-        {/* Header */}
         <div
           style={{
             textAlign: "center",
-            marginBottom: 40,
+            marginBottom: 32,
             animation: "examTitleIn 0.6s ease 0.1s both",
           }}
         >
@@ -297,7 +336,7 @@ function ExamSelectScreen({ onSelect, currentExam }) {
               width: 64,
               height: 64,
               borderRadius: 18,
-              background: "linear-gradient(135deg, #10a37f, #0d6b5e)",
+              background: "linear-gradient(135deg,#10a37f,#0d6b5e)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -325,9 +364,9 @@ function ExamSelectScreen({ onSelect, currentExam }) {
           </div>
         </div>
 
-        {/* Grid */}
+        {/* Grid — 2 columns */}
         <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
         >
           {EXAMS.map((e, i) => {
             const meta = EXAM_META[e];
@@ -338,8 +377,8 @@ function ExamSelectScreen({ onSelect, currentExam }) {
                 className="exam-card-btn"
                 onClick={() => handleSelect(e)}
                 style={{
-                  padding: "18px 16px",
-                  borderRadius: 16,
+                  padding: "16px 14px",
+                  borderRadius: 14,
                   background: isSelected
                     ? `${meta.color}18`
                     : "rgba(255,255,255,0.03)",
@@ -349,38 +388,37 @@ function ExamSelectScreen({ onSelect, currentExam }) {
                   cursor: "pointer",
                   textAlign: "left",
                   animation: `examCardIn 0.5s cubic-bezier(0.34,1.56,0.64,1) ${
-                    i * 60 + 200
+                    i * 50 + 150
                   }ms both`,
                   transform: isSelected ? "scale(1.02)" : "scale(1)",
                   boxShadow: isSelected ? `0 8px 24px ${meta.color}25` : "none",
                   backdropFilter: "blur(8px)",
-                  WebkitBackdropFilter: "blur(8px)",
                 }}
               >
-                <div style={{ fontSize: 28, marginBottom: 8, lineHeight: 1 }}>
+                <div style={{ fontSize: 24, marginBottom: 6, lineHeight: 1 }}>
                   {meta.icon}
                 </div>
                 <div
                   style={{
                     fontWeight: 700,
-                    fontSize: "1rem",
+                    fontSize: "0.92rem",
                     color: "#fff",
                     marginBottom: 2,
                   }}
                 >
                   {e}
                 </div>
-                <div style={{ fontSize: "0.72rem", color: "#555" }}>
+                <div style={{ fontSize: "0.68rem", color: "#555" }}>
                   {meta.desc}
                 </div>
                 {isSelected && (
                   <div
                     style={{
                       position: "absolute",
-                      top: 10,
-                      right: 10,
-                      width: 18,
-                      height: 18,
+                      top: 8,
+                      right: 8,
+                      width: 16,
+                      height: 16,
                       borderRadius: "50%",
                       background: meta.color,
                       display: "flex",
@@ -389,8 +427,8 @@ function ExamSelectScreen({ onSelect, currentExam }) {
                     }}
                   >
                     <svg
-                      width="10"
-                      height="10"
+                      width="9"
+                      height="9"
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="white"
@@ -411,10 +449,10 @@ function ExamSelectScreen({ onSelect, currentExam }) {
             onClick={() => handleSelect(currentExam)}
             style={{
               width: "100%",
-              marginTop: 16,
+              marginTop: 14,
               padding: "14px",
               borderRadius: 14,
-              background: "linear-gradient(135deg, #10a37f, #0d6b5e)",
+              background: "linear-gradient(135deg,#10a37f,#0d6b5e)",
               border: "none",
               color: "#fff",
               fontSize: "0.95rem",
@@ -438,11 +476,10 @@ function SwipeView({ activeTab, tabs }) {
   const [animating, setAnimating] = useState(false);
   const [direction, setDirection] = useState(0);
   const tabOrder = ["chat", "quiz", "planner"];
-
   useEffect(() => {
     if (activeTab !== prevTab) {
-      const from = tabOrder.indexOf(prevTab);
-      const to = tabOrder.indexOf(activeTab);
+      const from = tabOrder.indexOf(prevTab),
+        to = tabOrder.indexOf(activeTab);
       setDirection(to > from ? 1 : -1);
       setAnimating(true);
       const t = setTimeout(() => {
@@ -452,7 +489,6 @@ function SwipeView({ activeTab, tabs }) {
       return () => clearTimeout(t);
     }
   }, [activeTab]);
-
   return (
     <div
       style={{
@@ -464,10 +500,8 @@ function SwipeView({ activeTab, tabs }) {
       }}
     >
       <style>{`
-        @keyframes slideInFromRight { from{transform:translateX(60px);opacity:0} to{transform:translateX(0);opacity:1} }
-        @keyframes slideInFromLeft { from{transform:translateX(-60px);opacity:0} to{transform:translateX(0);opacity:1} }
-        @keyframes slideOutToLeft { from{transform:translateX(0);opacity:1} to{transform:translateX(-60px);opacity:0} }
-        @keyframes slideOutToRight { from{transform:translateX(0);opacity:1} to{transform:translateX(60px);opacity:0} }
+        @keyframes slideInFromRight{from{transform:translateX(60px);opacity:0}to{transform:translateX(0);opacity:1}}
+        @keyframes slideInFromLeft{from{transform:translateX(-60px);opacity:0}to{transform:translateX(0);opacity:1}}
       `}</style>
       {tabs[activeTab] && (
         <div
@@ -511,9 +545,9 @@ function TabBar({ activeTab, onTabChange }) {
       }}
     >
       <style>{`
-        @keyframes tabPop { 0%{transform:scale(1)} 40%{transform:scale(1.3)} 70%{transform:scale(0.92)} 100%{transform:scale(1)} }
-        .tab-btn { transition: all 0.15s ease; -webkit-tap-highlight-color: transparent; }
-        .tab-btn:active { transform: scale(0.9) !important; }
+        @keyframes tabPop{0%{transform:scale(1)}40%{transform:scale(1.3)}70%{transform:scale(0.92)}100%{transform:scale(1)}}
+        .tab-btn{transition:all 0.15s ease;-webkit-tap-highlight-color:transparent;}
+        .tab-btn:active{transform:scale(0.9)!important;}
       `}</style>
       {tabs.map((tab) => {
         const active = activeTab === tab.id;
@@ -593,11 +627,11 @@ const parsePipeTable = (text) => {
     if (line.includes("|")) {
       const parts = line.split("|").map((p) => p.trim());
       if (/^[A-D]\.\s/i.test(parts[0]) || /^\d+\.\s/.test(parts[0])) {
-        const left = parts[0].replace(/^[A-D]\.\s*/i, "").trim();
-        const right = parts[1]?.replace(/^\d+\.\s*/, "").trim() || "";
+        const left = parts[0].replace(/^[A-D]\.\s*/i, "").trim(),
+          right = parts[1]?.replace(/^\d+\.\s*/, "").trim() || "";
         const leftLabel =
-          parts[0].match(/^([A-D])\./i)?.[1]?.toUpperCase() || "";
-        const rightLabel = parts[1]?.match(/^(\d+)\./)?.[1] || "";
+            parts[0].match(/^([A-D])\./i)?.[1]?.toUpperCase() || "",
+          rightLabel = parts[1]?.match(/^(\d+)\./)?.[1] || "";
         rows.push({ leftLabel, left, rightLabel, right });
       } else {
         header1 = parts[0] || "List I";
@@ -650,7 +684,6 @@ function SmartQuestionDisplay({ question }) {
       else preambleLines.push(line);
     } else tableStarted = true;
   }
-
   if (isPipeTable(question)) {
     const { header1, header2, rows, questionLine } = parsePipeTable(question);
     return (
@@ -763,7 +796,6 @@ function SmartQuestionDisplay({ question }) {
       </div>
     );
   }
-
   if (isMatchingQuestion(question)) {
     const { list1Items, list2Items } = parseInlineLists(question);
     const questionText =
@@ -774,8 +806,8 @@ function SmartQuestionDisplay({ question }) {
     const list2Header =
       question.match(/list[\s-]?ii\s*\(([^)]+)\)/i)?.[1] || "List II";
     if (list1Items.length > 0 && list2Items.length > 0) {
-      const maxRows = Math.max(list1Items.length, list2Items.length);
-      const intro = question.split(/list[\s-]?i\b/i)[0].trim();
+      const maxRows = Math.max(list1Items.length, list2Items.length),
+        intro = question.split(/list[\s-]?i\b/i)[0].trim();
       return (
         <div>
           {intro && (
@@ -889,7 +921,6 @@ function SmartQuestionDisplay({ question }) {
       );
     }
   }
-
   const formatQuestion = (text) =>
     text
       .replace(/(Consider the following statements?:?\s*)/gi, "$1\n")
@@ -920,6 +951,7 @@ function SmartQuestionDisplay({ question }) {
 function QuizScreen({ exam, API_URL }) {
   const [screen, setScreen] = useState("setup");
   const [topic, setTopic] = useState("");
+  const [selectedState, setSelectedState] = useState(""); // ← State PCS state
   const [count, setCount] = useState(10);
   const [questions, setQuestions] = useState([]);
   const [current, setCurrent] = useState(0);
@@ -931,9 +963,20 @@ function QuizScreen({ exam, API_URL }) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
 
+  // Reset state selector when exam changes
+  useEffect(() => {
+    setSelectedState("");
+    setTopic("");
+    setError("");
+  }, [exam]);
+
   const startQuiz = async () => {
     if (!topic.trim()) {
       setError("Please enter a topic");
+      return;
+    }
+    if (exam === "State PCS" && !selectedState) {
+      setError("Please select your state");
       return;
     }
     setError("");
@@ -942,7 +985,16 @@ function QuizScreen({ exam, API_URL }) {
       const res = await fetch(`${API_URL}/quiz/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, exam, count }),
+        body: JSON.stringify({
+          topic,
+          exam,
+          count,
+          userId: USER_ID,
+          // Pass state separately — backend joins them as "State (Code) — Topic"
+          ...(exam === "State PCS" && selectedState
+            ? { state: selectedState }
+            : {}),
+        }),
       });
       const data = await res.json();
       if (!data.questions) throw new Error(data.error || "Failed");
@@ -954,7 +1006,7 @@ function QuizScreen({ exam, API_URL }) {
       setStartTime(Date.now());
       setScreen("playing");
     } catch (err) {
-      setError("Failed to generate quiz. Try again.");
+      setError(err.message || "Failed to generate quiz. Try again.");
       setScreen("setup");
     }
   };
@@ -1048,6 +1100,7 @@ function QuizScreen({ exam, API_URL }) {
         overflow: "hidden",
       }}
     >
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -1061,7 +1114,10 @@ function QuizScreen({ exam, API_URL }) {
         <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
           🧠 Quiz Mode
         </div>
-        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
+        <div style={{ fontSize: "0.72rem", color: "#666" }}>
+          {exam}
+          {selectedState ? ` · ${selectedState.split(" ")[0]}` : ""}
+        </div>
         <button
           onClick={loadHistory}
           style={{
@@ -1075,7 +1131,9 @@ function QuizScreen({ exam, API_URL }) {
           📊 History
         </button>
       </div>
+
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px" }}>
+        {/* ── SETUP SCREEN ── */}
         {screen === "setup" && (
           <div
             style={{
@@ -1083,7 +1141,7 @@ function QuizScreen({ exam, API_URL }) {
               margin: "0 auto",
               display: "flex",
               flexDirection: "column",
-              gap: 20,
+              gap: 18,
             }}
           >
             <div style={{ textAlign: "center" }}>
@@ -1097,6 +1155,87 @@ function QuizScreen({ exam, API_URL }) {
                 Test your knowledge with AI-generated questions
               </div>
             </div>
+
+            {/* ── STATE SELECTOR — only shown for State PCS ── */}
+            {exam === "State PCS" && (
+              <div>
+                <label
+                  style={{
+                    fontSize: "0.82rem",
+                    color: "#999",
+                    marginBottom: 6,
+                    display: "block",
+                  }}
+                >
+                  Select State <span style={{ color: "#e53e3e" }}>*</span>
+                </label>
+                <div style={{ position: "relative" }}>
+                  <select
+                    value={selectedState}
+                    onChange={(e) => setSelectedState(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "12px 14px",
+                      background: "#2a2a2a",
+                      border: `1px solid ${
+                        selectedState ? "#10a37f" : "#3a3a3a"
+                      }`,
+                      borderRadius: 10,
+                      color: selectedState ? "#ececec" : "#666",
+                      fontSize: "0.9rem",
+                      outline: "none",
+                      fontFamily: "'Figtree', sans-serif",
+                      appearance: "none",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <option value="">— Choose your state —</option>
+                    {STATE_PCS_LIST.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Dropdown arrow */}
+                  <svg
+                    style={{
+                      position: "absolute",
+                      right: 12,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      pointerEvents: "none",
+                    }}
+                    width="12"
+                    height="8"
+                    viewBox="0 0 12 8"
+                    fill="none"
+                  >
+                    <path
+                      d="M1 1L6 7L11 1"
+                      stroke="#888"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </div>
+                {selectedState && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: "0.75rem",
+                      color: "#10a37f",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    ✓ {selectedState} selected
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Topic input */}
             <div>
               <label
                 style={{
@@ -1112,7 +1251,10 @@ function QuizScreen({ exam, API_URL }) {
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && startQuiz()}
-                placeholder="e.g. Photosynthesis, Indian History..."
+                placeholder={
+                  TOPIC_PLACEHOLDERS[exam] ||
+                  "e.g. Photosynthesis, Indian History..."
+                }
                 style={{
                   width: "100%",
                   padding: "12px 14px",
@@ -1126,6 +1268,42 @@ function QuizScreen({ exam, API_URL }) {
                 }}
               />
             </div>
+
+            {/* CBSE hint */}
+            {(exam === "CBSE 10th" || exam === "CBSE 12th") && (
+              <div
+                style={{
+                  background: "#10a37f10",
+                  border: "1px solid #10a37f30",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  fontSize: "0.78rem",
+                  color: "#10a37f",
+                }}
+              >
+                💡 All questions are strictly from NCERT{" "}
+                {exam === "CBSE 10th" ? "Class 10" : "Class 12"} syllabus
+              </div>
+            )}
+
+            {/* State PCS hint */}
+            {exam === "State PCS" && selectedState && (
+              <div
+                style={{
+                  background: "#fb923c10",
+                  border: "1px solid #fb923c30",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  fontSize: "0.78rem",
+                  color: "#fb923c",
+                }}
+              >
+                🗺️ 40% questions will be specific to{" "}
+                {selectedState.split(" ")[0]} · 60% general PCS topics
+              </div>
+            )}
+
+            {/* Question count */}
             <div>
               <label
                 style={{
@@ -1161,6 +1339,7 @@ function QuizScreen({ exam, API_URL }) {
                 ))}
               </div>
             </div>
+
             {error && (
               <div
                 style={{
@@ -1175,6 +1354,7 @@ function QuizScreen({ exam, API_URL }) {
                 {error}
               </div>
             )}
+
             <button
               onClick={startQuiz}
               style={{
@@ -1203,11 +1383,13 @@ function QuizScreen({ exam, API_URL }) {
                 strokeLinecap="round"
               >
                 <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>{" "}
+              </svg>
               Start Quiz
             </button>
           </div>
         )}
+
+        {/* ── LOADING ── */}
         {screen === "loading" && (
           <div
             style={{
@@ -1229,11 +1411,19 @@ function QuizScreen({ exam, API_URL }) {
                 animation: "spin 0.8s linear infinite",
               }}
             />
-            <div style={{ color: "#888", fontSize: "0.9rem" }}>
-              Generating {count} questions on "{topic}"...
+            <div
+              style={{ color: "#888", fontSize: "0.9rem", textAlign: "center" }}
+            >
+              Generating {count} questions on "{topic}"
+              {exam === "State PCS" && selectedState
+                ? ` for ${selectedState.split(" ")[0]}`
+                : ""}
+              ...
             </div>
           </div>
         )}
+
+        {/* ── PLAYING ── */}
         {screen === "playing" && q && (
           <div
             style={{
@@ -1422,6 +1612,8 @@ function QuizScreen({ exam, API_URL }) {
             )}
           </div>
         )}
+
+        {/* ── RESULT ── */}
         {screen === "result" && (
           <div
             style={{
@@ -1596,6 +1788,8 @@ function QuizScreen({ exam, API_URL }) {
             </div>
           </div>
         )}
+
+        {/* ── HISTORY ── */}
         {screen === "history" && (
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div
@@ -2023,7 +2217,7 @@ function PlannerScreen({ exam, API_URL }) {
           <div style={{ maxWidth: 600, margin: "0 auto" }}>
             <div
               style={{
-                background: "linear-gradient(135deg, #10a37f20, #0d8a6a10)",
+                background: "linear-gradient(135deg,#10a37f20,#0d8a6a10)",
                 border: "1px solid #10a37f30",
                 borderRadius: 14,
                 padding: "16px",
@@ -2081,7 +2275,7 @@ function PlannerScreen({ exam, API_URL }) {
                   style={{
                     height: "100%",
                     borderRadius: 3,
-                    background: "linear-gradient(90deg, #10a37f, #0d8a6a)",
+                    background: "linear-gradient(90deg,#10a37f,#0d8a6a)",
                     width: `${progressPct}%`,
                     transition: "width 0.4s ease",
                   }}
@@ -2369,7 +2563,7 @@ function PlannerScreen({ exam, API_URL }) {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(7, 1fr)",
+                    gridTemplateColumns: "repeat(7,1fr)",
                     gap: 6,
                   }}
                 >
@@ -2632,16 +2826,16 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   const [showSidebar, setShowSidebar] = useState(false);
   const [loadingChats, setLoadingChats] = useState(false);
 
-  const messagesEndRef = useRef(null);
-  const textareaRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const cameraInputRef = useRef(null);
-  const pdfInputRef = useRef(null);
-  const audioRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const voiceRef = useRef(voice);
-  const messagesRef = useRef(messages);
-  const currentChatIdRef = useRef(currentChatId);
+  const messagesEndRef = useRef(null),
+    textareaRef = useRef(null),
+    fileInputRef = useRef(null),
+    cameraInputRef = useRef(null),
+    pdfInputRef = useRef(null),
+    audioRef = useRef(null),
+    mediaRecorderRef = useRef(null),
+    voiceRef = useRef(voice),
+    messagesRef = useRef(messages),
+    currentChatIdRef = useRef(currentChatId);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -2670,7 +2864,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
   };
-
   const loadChatList = async () => {
     setLoadingChats(true);
     try {
@@ -2679,7 +2872,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     } catch (e) {}
     setLoadingChats(false);
   };
-
   const createNewChat = async (examType = exam) => {
     try {
       const res = await fetch(`${API_URL}/chats/${USER_ID}`, {
@@ -2698,7 +2890,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       return null;
     }
   };
-
   const loadChat = async (chatId) => {
     try {
       const res = await fetch(`${API_URL}/chats/${USER_ID}/${chatId}`);
@@ -2710,7 +2901,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       showToast("⚠️ Failed to load chat.");
     }
   };
-
   const deleteChat = async (chatId, e) => {
     e.stopPropagation();
     try {
@@ -2724,7 +2914,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       await loadChatList();
     } catch (e) {}
   };
-
   const buildHistory = (msgs) =>
     msgs
       .filter((m) => m.content?.trim())
@@ -2931,7 +3120,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       mediaRecorderRef.current = null;
     }
   };
-
   const formatDate = (dateStr) => {
     const date = new Date(dateStr),
       diff = new Date() - date,
@@ -2941,7 +3129,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     if (days < 7) return `${days} days ago`;
     return date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   };
-
   const isEmpty = messages.length === 0;
 
   return (
@@ -2958,7 +3145,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         setShowAttachMenu(false);
       }}
     >
-      {/* SIDEBAR OVERLAY */}
       {showSidebar && (
         <div
           onClick={() => setShowSidebar(false)}
@@ -2970,6 +3156,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
           }}
         />
       )}
+      {/* SIDEBAR */}
       <div
         style={{
           width: showSidebar ? 260 : 0,
@@ -2980,7 +3167,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          transition: "width 0.25s ease, min-width 0.25s ease",
+          transition: "width 0.25s ease,min-width 0.25s ease",
           flexShrink: 0,
           zIndex: 50,
           position: "fixed",
@@ -3010,7 +3197,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 width: 28,
                 height: 28,
                 borderRadius: 7,
-                background: "linear-gradient(135deg, #10a37f, #0d8a6a)",
+                background: "linear-gradient(135deg,#10a37f,#0d8a6a)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -3161,7 +3348,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         </div>
       </div>
 
-      {/* MAIN CHAT AREA */}
+      {/* MAIN CHAT */}
       <div
         style={{
           flex: 1,
@@ -3223,7 +3410,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                   width: 30,
                   height: 30,
                   borderRadius: 8,
-                  background: "linear-gradient(135deg, #10a37f, #0d8a6a)",
+                  background: "linear-gradient(135deg,#10a37f,#0d8a6a)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -3255,7 +3442,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 fontSize: "0.78rem",
                 fontWeight: 500,
                 cursor: "pointer",
-                textTransform: "capitalize",
                 outline: "none",
               }}
             >
@@ -3280,9 +3466,19 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                   fontSize: "0.78rem",
                   fontWeight: 500,
                   cursor: "pointer",
+                  maxWidth: 120,
+                  overflow: "hidden",
                 }}
               >
-                {exam}
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {exam}
+                </span>
                 <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
                   <path
                     d="M1 1L5 5L9 1"
@@ -3303,7 +3499,9 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                     borderRadius: 10,
                     padding: 4,
                     zIndex: 100,
-                    minWidth: 110,
+                    minWidth: 150,
+                    maxHeight: 300,
+                    overflowY: "auto",
                     boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
                   }}
                 >
@@ -3328,7 +3526,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                         fontWeight: exam === e ? 600 : 400,
                       }}
                     >
-                      {e}
+                      {EXAM_META[e]?.icon} {e}
                     </button>
                   ))}
                 </div>
@@ -3366,7 +3564,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                     width: 52,
                     height: 52,
                     borderRadius: 14,
-                    background: "linear-gradient(135deg, #10a37f, #0d8a6a)",
+                    background: "linear-gradient(135deg,#10a37f,#0d8a6a)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -3474,8 +3672,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                           height: 26,
                           borderRadius: 6,
                           flexShrink: 0,
-                          background:
-                            "linear-gradient(135deg, #10a37f, #0d8a6a)",
+                          background: "linear-gradient(135deg,#10a37f,#0d8a6a)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -3795,7 +3992,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         </div>
       </div>
 
-      {/* ATTACH BOTTOM SHEET */}
+      {/* ATTACH SHEET */}
       {showAttachMenu && (
         <div
           onClick={() => setShowAttachMenu(false)}
@@ -3931,7 +4128,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         </div>
       )}
 
-      {/* TOAST */}
       {toast && (
         <div
           style={{
@@ -3959,50 +4155,43 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [appState, setAppState] = useState("splash"); // splash | exam-select | main
+  const [appState, setAppState] = useState("splash");
   const [exam, setExam] = useState("");
   const [activeTab, setActiveTab] = useState("chat");
   const API_URL = import.meta.env.VITE_API_URL;
 
   const GLOBAL_STYLES = `
     @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    html, body { overflow: hidden; overscroll-behavior: none; background: #212121; height: 100%; }
-    textarea, input { font-family: 'Figtree', system-ui, sans-serif !important; }
-    textarea { font-size: 16px !important; }
-    .msg-content p { margin-bottom: 10px; line-height: 1.75; } .msg-content p:last-child { margin-bottom: 0; }
-    .msg-content ul, .msg-content ol { padding-left: 20px; margin: 8px 0; } .msg-content li { margin-bottom: 6px; line-height: 1.7; }
-    .msg-content strong { font-weight: 600; color: #fff; } .msg-content em { color: #ccc; }
-    .msg-content code { background: #343434; padding: 2px 6px; border-radius: 4px; font-size: 0.84em; color: #e0e0e0; }
-    .msg-content pre { background: #1a1a1a; padding: 14px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid #333; }
-    .msg-content h1,.msg-content h2,.msg-content h3 { margin: 14px 0 6px; color: #fff; font-weight: 600; }
-    .msg-content blockquote { border-left: 3px solid #10a37f; padding-left: 12px; color: #aaa; margin: 8px 0; }
-    .msg-content table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.85rem; }
-    .msg-content th { background: #2a2a2a; color: #fff; padding: 8px 12px; text-align: left; border: 1px solid #3a3a3a; }
-    .msg-content td { padding: 7px 12px; border: 1px solid #2a2a2a; color: #ddd; }
-    .msg-content tr:nth-child(even) td { background: #1e1e1e; }
-    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes dotPulse { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
-    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-    @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
-    .dot1 { animation: dotPulse 1s ease-in-out infinite; } .dot2 { animation: dotPulse 1s ease-in-out 0.15s infinite; } .dot3 { animation: dotPulse 1s ease-in-out 0.3s infinite; }
-    select option { background: #2a2a2a; color: #ececec; }
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    html,body{overflow:hidden;overscroll-behavior:none;background:#212121;height:100%;}
+    textarea,input{font-family:'Figtree',system-ui,sans-serif!important;}
+    textarea{font-size:16px!important;}
+    .msg-content p{margin-bottom:10px;line-height:1.75;}.msg-content p:last-child{margin-bottom:0;}
+    .msg-content ul,.msg-content ol{padding-left:20px;margin:8px 0;}.msg-content li{margin-bottom:6px;line-height:1.7;}
+    .msg-content strong{font-weight:600;color:#fff;}.msg-content em{color:#ccc;}
+    .msg-content code{background:#343434;padding:2px 6px;border-radius:4px;font-size:0.84em;color:#e0e0e0;}
+    .msg-content pre{background:#1a1a1a;padding:14px;border-radius:8px;overflow-x:auto;margin:10px 0;border:1px solid #333;}
+    .msg-content h1,.msg-content h2,.msg-content h3{margin:14px 0 6px;color:#fff;font-weight:600;}
+    .msg-content blockquote{border-left:3px solid #10a37f;padding-left:12px;color:#aaa;margin:8px 0;}
+    .msg-content table{width:100%;border-collapse:collapse;margin:10px 0;font-size:0.85rem;}
+    .msg-content th{background:#2a2a2a;color:#fff;padding:8px 12px;text-align:left;border:1px solid #3a3a3a;}
+    .msg-content td{padding:7px 12px;border:1px solid #2a2a2a;color:#ddd;}
+    .msg-content tr:nth-child(even) td{background:#1e1e1e;}
+    ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-thumb{background:#3a3a3a;border-radius:4px;}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes dotPulse{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+    @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+    .dot1{animation:dotPulse 1s ease-in-out infinite;}.dot2{animation:dotPulse 1s ease-in-out 0.15s infinite;}.dot3{animation:dotPulse 1s ease-in-out 0.3s infinite;}
+    select option{background:#2a2a2a;color:#ececec;}
   `;
-
-  const handleSplashDone = () => {
-    // Always show exam-select so user consciously picks/confirms their exam
-    setAppState("exam-select");
-  };
 
   const handleExamSelect = (e) => {
     localStorage.setItem("examai_exam", e);
     setExam(e);
     setAppState("main");
   };
-
   const handleChangeExam = (e) => {
     localStorage.setItem("examai_exam", e);
     setExam(e);
@@ -4012,10 +4201,9 @@ export default function App() {
     return (
       <>
         <style>{GLOBAL_STYLES}</style>
-        <SplashScreen onDone={handleSplashDone} />
+        <SplashScreen onDone={() => setAppState("exam-select")} />
       </>
     );
-
   if (appState === "exam-select")
     return (
       <>
@@ -4041,8 +4229,6 @@ export default function App() {
       }}
     >
       <style>{GLOBAL_STYLES}</style>
-
-      {/* Exam change button — top bar only in main app */}
       <div
         style={{
           display: "flex",
@@ -4078,8 +4264,6 @@ export default function App() {
           </svg>
         </button>
       </div>
-
-      {/* Swipe Tab Area */}
       <SwipeView
         activeTab={activeTab}
         tabs={{
@@ -4094,8 +4278,6 @@ export default function App() {
           planner: <PlannerScreen exam={exam} API_URL={API_URL} />,
         }}
       />
-
-      {/* Bottom Tab Bar */}
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
     </div>
   );

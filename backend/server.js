@@ -162,7 +162,7 @@ One precise factual/conceptual question with 4 distinct options.
 
 DIFFICULTY: 50% Moderate, 40% Hard, 10% Easy
 NEVER use "All of the above" or "None of the above" as options.
-Mimic real UPSC PYQ style (2014–2025). Do NOT copy exact PYQs.
+Mimic real UPSC PYQ style (2014–2023). Do NOT copy exact PYQs.
 `;
 
   const examInstructions = {
@@ -171,7 +171,7 @@ Mimic real UPSC PYQ style (2014–2025). Do NOT copy exact PYQs.
 You are a UPSC Civil Services Preliminary Examination question setter for GS Paper I.
 
 Generate questions STRICTLY based on:
-1. UPSC Prelims GS Paper I PYQs (2014–2025)
+1. UPSC Prelims GS Paper I PYQs (2014–2023)
 2. NCERT textbooks Class 6–12:
    - Polity: Class 8–12
    - History: Class 6–12
@@ -193,7 +193,7 @@ ${upscGS1Formats}`,
     CSAT: `
 You are a UPSC Civil Services Preliminary Examination question setter for GS Paper II — CSAT (Civil Services Aptitude Test).
 
-Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2025).
+Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2023).
 
 TOPIC REQUESTED: "${topic}"
 
@@ -368,6 +368,178 @@ RULES:
 - Options must be technically precise
 - Mention GATE subject/unit in explanation
 - 60% hard, 40% medium
+`,
+
+    // ── STATE PCS ─────────────────────────────────
+    "State PCS": `
+You are a State Public Service Commission (State PCS) Preliminary Examination question setter.
+
+State PCS exams follow UPSC pattern but with additional focus on STATE-SPECIFIC content.
+Generate questions covering BOTH general topics AND state-specific topics relevant to Indian states.
+
+SYLLABUS COVERAGE:
+
+1. GENERAL TOPICS (same as UPSC GS Paper I — 60% of questions)
+   - Indian History & Culture (Ancient, Medieval, Modern)
+   - Indian & World Geography
+   - Indian Polity & Constitution
+   - Indian Economy & Planning
+   - General Science & Technology
+   - Environment & Ecology
+   - Current Affairs (National)
+
+2. STATE-SPECIFIC TOPICS (40% of questions) — cover these for major states:
+   - State History & Culture — important rulers, dynasties, freedom fighters from the state
+   - State Geography — rivers, mountains, forests, districts, borders
+   - State Economy — major industries, agriculture, irrigation projects, minerals
+   - State Polity — Governor, CM, State Legislature, High Court, Panchayati Raj in the state
+   - State Schemes & Policies — flagship government schemes of the state
+   - State Art, Culture & Festivals — folk dances, music, festivals, handicrafts
+   - State Current Affairs — recent appointments, awards, infrastructure projects
+   - Important state personalities — historical and contemporary
+
+MAJOR STATE PCS EXAMS TO COVER:
+- UPPSC (Uttar Pradesh) — largest PCS exam
+- BPSC (Bihar)
+- MPPSC (Madhya Pradesh)
+- RPSC (Rajasthan)
+- JPSC (Jharkhand)
+- UKPSC (Uttarakhand)
+- HPSC (Haryana)
+- PPSC (Punjab)
+- MPSC (Maharashtra)
+- KPSC (Karnataka)
+- TNPSC (Tamil Nadu)
+- APPSC (Andhra Pradesh)
+- TSPSC (Telangana)
+- OPSC (Odisha)
+- WBPSC (West Bengal)
+
+TOPIC FORMAT (sent by backend):
+"StateName (ExamCode) — SubjectTopic"
+Example: "Uttar Pradesh (UPPSC) — History"
+
+You MUST:
+1. Extract the STATE NAME from before the " — " separator
+2. Extract the SUBJECT TOPIC from after the " — " separator
+3. Generate 40% questions specifically about THAT STATE only
+4. Generate 60% questions on the subject topic at national/NCERT level
+5. NEVER mix up states — if topic says Rajasthan, do NOT generate UP-specific questions
+6. If no " — " separator found, generate general mixed PCS questions
+
+Topic received: "${topic}"
+
+QUESTION FORMAT MIX (mirrors UPSC Prelims style):
+- 50% Statement-based ("Consider the following statements...")
+- 20% Direct factual MCQ
+- 15% Match the following
+- 15% Statement I/II
+
+STRICT RULES:
+- DO NOT invent state schemes, districts, or facts
+- Every state-specific fact must be real and verifiable
+- National facts must be from NCERT or verified sources
+- DIFFICULTY: 40% Easy-Medium (state facts), 60% Medium-Hard (conceptual)
+- NEVER use "All of the above" or "None of the above"
+- Mention which state the question relates to in the explanation
+
+STYLE REQUIREMENTS (mirror UPSC format):
+
+FORMAT 1 — STATEMENT-BASED (50%)
+"Consider the following statements:
+1. [Statement]
+2. [Statement]
+3. [Statement]
+Which of the statements given above is/are correct?"
+Options: A) 1 only  B) 1 and 2 only  C) 2 and 3 only  D) 1, 2 and 3
+
+FORMAT 2 — MATCH LIST (15%)
+List I | List II
+A. Item | 1. Match
+B. Item | 2. Match
+C. Item | 3. Match
+"How many of the above pairs are correctly matched?"
+Options: A) Only one  B) Only two  C) Only three  D) All three
+
+FORMAT 3 — DIRECT (20%)
+Single precise question with 4 distinct options.
+
+FORMAT 4 — STATEMENT I/II (15%)
+A) Both correct and II explains I
+B) Both correct but II does not explain I
+C) I correct but II incorrect
+D) I incorrect but II correct
+
+NEVER use "All of the above" or "None of the above".
+`,
+
+    // ── CBSE 10th ─────────────────────────────────
+    "CBSE 10th": `
+You are a CBSE Class 10 Board Examination question setter.
+
+Generate questions STRICTLY based on:
+1. NCERT Class 10 textbooks ONLY
+   - Mathematics: Real Numbers, Polynomials, Linear Equations, Triangles, Circles, Arithmetic Progressions, Trigonometry, Statistics, Probability, Surface Areas & Volumes
+   - Science: Chemical Reactions, Acids/Bases/Salts, Metals & Non-metals, Carbon Compounds, Life Processes, Control & Coordination, Heredity, Light, Electricity, Magnetic Effects, Environment
+   - Social Science: History (Nationalism, Industrialisation, Print Culture), Geography (Resources, Agriculture, Water, Minerals), Political Science (Power Sharing, Democracy), Economics (Development, Money, Globalisation)
+   - English: Grammar (tenses, voice, reported speech, clauses), Literature (First Flight, Footprints Without Feet)
+
+2. CBSE Class 10 Board PYQs (2018–2024)
+
+QUESTION FORMAT MIX:
+- 40% MCQ (1 mark) — direct concept, one clearly correct answer
+- 25% Short Answer (2–3 marks) — ask to explain or give 2 examples
+- 20% Case-based / Assertion-Reason
+- 15% Numerical problems (Maths/Science only)
+
+STRICT RULES:
+- Language must be simple and clear (Class 10 level)
+- Every fact must be from NCERT Class 10 only — do not use Class 11/12 concepts
+- For Science: mention the chapter name in explanation
+- For Maths: show full step-by-step solution in explanation
+- For assertion-reason use format:
+  A) Both A and R are true and R is the correct explanation of A
+  B) Both A and R are true but R is NOT the correct explanation of A
+  C) A is true but R is false
+  D) A is false but R is true
+- DIFFICULTY: 60% Easy-Medium, 40% Medium-Hard (Board level)
+- NEVER use "All of the above" or "None of the above"
+
+Topic: "${topic}"
+`,
+
+    // ── CBSE 12th ─────────────────────────────────
+    "CBSE 12th": `
+You are a CBSE Class 12 Board Examination question setter.
+
+Generate questions STRICTLY based on:
+1. NCERT Class 12 textbooks ONLY
+   - Physics: Electric Charges, Current Electricity, Magnetism, EMI, Optics, Dual Nature, Atoms, Nuclei, Semiconductors
+   - Chemistry: Solutions, Electrochemistry, Chemical Kinetics, Surface Chemistry, p/d/f Block Elements, Coordination Compounds, Haloalkanes, Alcohols, Aldehydes, Amines, Biomolecules, Polymers
+   - Mathematics: Relations & Functions, Inverse Trig, Matrices, Determinants, Continuity, Differentiation, Integration, Differential Equations, Vectors, 3D Geometry, Linear Programming, Probability
+   - Biology: Reproduction, Genetics & Evolution, Biology in Human Welfare, Biotechnology, Ecology
+   - Accountancy: Partnership, Company Accounts, Cash Flow, Analysis of Financial Statements
+   - Economics: Macro (National Income, Money, Banking, Government Budget, Balance of Payments) + Micro (Consumer, Producer, Market)
+   - Political Science, History, Geography — as per NCERT Class 12
+
+2. CBSE Class 12 Board PYQs (2018–2024)
+
+QUESTION FORMAT MIX:
+- 35% MCQ (1 mark) — concept-based, one mark, no ambiguity
+- 25% Short Answer (2–3 marks)
+- 20% Long Answer / Case-based (4–5 marks) — break into sub-parts (i), (ii), (iii)
+- 20% Numerical / Derivation (Physics, Chemistry, Maths, Economics)
+
+STRICT RULES:
+- Every fact must come from NCERT Class 12 — do not mix Class 11 concepts unless explicitly asked
+- For Physics/Chemistry/Maths: show complete working in explanation with formulas
+- For Biology: use correct scientific nomenclature, mention chapter
+- For Accountancy/Economics: show journal entries or calculations where needed
+- For case-based questions: provide a short scenario/paragraph first, then 2–3 sub-questions
+- DIFFICULTY: 30% Easy, 40% Medium, 30% Hard (Board + competitive awareness)
+- NEVER use "All of the above" or "None of the above"
+
+Topic: "${topic}"
 `,
 
     // ── General ───────────────────────────────────
@@ -570,16 +742,135 @@ app.post("/chat", async (req, res) => {
   }
 });
 
+// ── GROQ CALL WITH MODEL FALLBACK CHAIN ──────────
+//
+// Model tier strategy (cheapest → most capable):
+//   1. llama-3.1-8b-instant   — tiny, very fast, low token cost  (try first)
+//   2. llama-3.2-11b-text-preview — mid-size fallback
+//   3. llama-3.3-70b-versatile — full power, most tokens         (last resort)
+//
+// If a model hits a rate limit (429) we immediately try the next one.
+// This way daily TPD is spread across models instead of burning one.
+
+const GROQ_MODELS = [
+  { id: "llama-3.1-8b-instant", maxTokens: 2048 },
+  { id: "llama-3.2-11b-text-preview", maxTokens: 3000 },
+  { id: "llama-3.3-70b-versatile", maxTokens: 4096 },
+];
+
+// Extra tokens needed when the prompt contains live news context
+const CONTEXT_EXTRA_TOKENS = 2000;
+
+// Simple in-memory per-user rate limiter (resets every hour)
+// Prevents a single user from burning the whole daily quota
+const userQuizCounts = new Map();
+const USER_HOURLY_LIMIT = 15; // max quiz generates per user per hour
+
+const checkUserRateLimit = (userId) => {
+  if (!userId) return true; // anonymous — allow but don't track
+  const now = Date.now();
+  const entry = userQuizCounts.get(userId);
+  if (!entry || now - entry.windowStart > 60 * 60 * 1000) {
+    // New window
+    userQuizCounts.set(userId, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= USER_HOURLY_LIMIT) return false;
+  entry.count++;
+  return true;
+};
+
+const callGroqWithFallback = async (prompt, hasContext = false) => {
+  let lastError = null;
+  for (const model of GROQ_MODELS) {
+    const maxTokens = model.maxTokens + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
+    try {
+      const response = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: model.id,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.4,
+            max_tokens: maxTokens,
+          }),
+        }
+      );
+
+      // Rate limited on this model → try next
+      if (response.status === 429) {
+        const errData = await response.json().catch(() => ({}));
+        console.warn(`⚠️  ${model.id} rate limited — trying next model...`);
+        lastError = errData.error?.message || `Rate limit on ${model.id}`;
+        continue;
+      }
+
+      // Any other HTTP error → throw immediately (not a rate limit issue)
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(
+          errData.error?.message || `Groq error: ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content?.trim();
+      if (!content) throw new Error("Empty response from AI");
+
+      console.log(`✅ Quiz generated using model: ${model.id}`);
+      return content;
+    } catch (err) {
+      // If it's a rate limit we already handled above; re-throw anything else
+      if (!err.message.includes("Rate limit")) throw err;
+      lastError = err.message;
+    }
+  }
+
+  // All models exhausted
+  throw new Error(
+    `All models are currently rate limited. Please wait a few minutes and try again. (${lastError})`
+  );
+};
+
 // ── QUIZ ──────────────────────────────────────────
 app.post("/quiz/generate", async (req, res) => {
-  const { topic, exam = "General", count = 10 } = req.body;
+  const { topic, exam = "General", count = 10, userId, state } = req.body;
   if (!topic) return res.status(400).json({ error: "Topic is required" });
 
-  // ✅ Fetch live NewsAPI context ONLY for Current Affairs
+  // State PCS requires a state to be selected
+  if (exam === "State PCS" && !state) {
+    return res
+      .status(400)
+      .json({ error: "Please select a state for State PCS quiz." });
+  }
+
+  // Per-user hourly rate limit
+  if (!checkUserRateLimit(userId)) {
+    return res.status(429).json({
+      error: `You've generated ${USER_HOURLY_LIMIT} quizzes this hour. Please wait before generating more.`,
+    });
+  }
+
+  // Cap count to 10 to avoid huge token usage
+  const safeCount = Math.min(Number(count) || 10, 10);
+
+  // For State PCS: prepend the selected state to the topic
+  // so the prompt knows exactly which state to focus on
+  // e.g. topic = "History", state = "Uttar Pradesh (UPPSC)"
+  // → finalTopic = "Uttar Pradesh (UPPSC) — History"
+  const finalTopic =
+    exam === "State PCS" && state ? `${state} — ${topic}` : topic;
+
+  // Fetch live NewsAPI context ONLY for Current Affairs
   let contextBlock = "";
   if (exam === "Current Affairs") {
-    console.log(`📰 Fetching NewsAPI context for: "${topic}"`);
-    contextBlock = await fetchNewsContext(topic);
+    console.log(`📰 Fetching NewsAPI context for: "${finalTopic}"`);
+    contextBlock = await fetchNewsContext(finalTopic);
     if (contextBlock) {
       console.log("✅ NewsAPI context fetched successfully");
     } else {
@@ -589,53 +880,33 @@ app.post("/quiz/generate", async (req, res) => {
     }
   }
 
-  const prompt = getQuizPrompt(exam, topic, count, contextBlock);
+  const prompt = getQuizPrompt(exam, finalTopic, safeCount, contextBlock);
 
   try {
-    const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.4,
-          // Use more tokens for Current Affairs since prompt is larger with news context
-          max_tokens: exam === "Current Affairs" ? 6000 : 4096,
-        }),
-      }
-    );
-
-    // ✅ Guard: check HTTP status first
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(
-        errData.error?.message || `Groq API error: ${response.status}`
-      );
-    }
-
-    const data = await response.json();
-
-    // ✅ Guard: check content exists before calling .replace()
-    const content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) throw new Error("Empty response from AI");
-
+    const content = await callGroqWithFallback(prompt, !!contextBlock);
     const jsonStr = content.replace(/```json|```/g, "").trim();
     const questions = JSON.parse(jsonStr);
     if (!Array.isArray(questions)) throw new Error("Invalid format");
 
     res.json({
       questions,
-      // Let the frontend know if live context was used
       contextUsed: exam === "Current Affairs" && !!contextBlock,
     });
   } catch (err) {
     console.error("Quiz error:", err.message);
-    res.status(500).json({ error: "Failed to generate quiz." });
+
+    // Return a user-friendly message for rate limit errors
+    const isRateLimit =
+      err.message.toLowerCase().includes("rate limit") ||
+      err.message.toLowerCase().includes("rate limited") ||
+      err.message.toLowerCase().includes("tpd") ||
+      err.message.toLowerCase().includes("429");
+
+    res.status(isRateLimit ? 429 : 500).json({
+      error: isRateLimit
+        ? "The AI service is temporarily busy. Please wait a few minutes and try again."
+        : "Failed to generate quiz. Please try again.",
+    });
   }
 });
 
