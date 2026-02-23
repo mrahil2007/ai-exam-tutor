@@ -1,8 +1,6 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-// Polyfill browser APIs that pdfjs-dist needs in Node.js
-
 import express from "express";
 import cors from "cors";
 import multer from "multer";
@@ -10,10 +8,6 @@ import { extractText } from "unpdf";
 import { askAI, askAIWithImage } from "./aiService.js";
 import Groq from "groq-sdk";
 import { MongoClient, ObjectId } from "mongodb";
-import { Storage } from "@google-cloud/storage";
-
-const storage = new Storage();
-const bucketName = "examai"; // your bucket name
 
 const app = express();
 app.use(cors());
@@ -37,7 +31,7 @@ if (!process.env.NEWS_API_KEY) {
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ── MONGODB ──────────────────────────────────────
+// ── MONGODB ───────────────────────────────────────────────────────────────────
 let db;
 const client = new MongoClient(process.env.MONGODB_URI);
 async function connectDB() {
@@ -51,116 +45,56 @@ const getChats = () => db.collection("chats");
 const getQuizResults = () => db.collection("quiz_results");
 const getPlanners = () => db.collection("study_planners");
 
-// ── GOOGLE CLOUD VISION OCR ───────────────────────
-// Free tier: 1,000 pages/month — no cost up to that limit.
-//
-// SETUP (one-time):
-//   1. npm install @google-cloud/vision
-//   2. GCP Console → Enable "Cloud Vision API"
-//   3. IAM → Create Service Account → Download JSON key
-//   4. Add to .env:  GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/key.json
-//
-// HOW IT'S USED HERE:
-//   Scanned PDF path:  pdfjs renders page 1 → PNG buffer
-//     → [1st try] Google Vision textDetection  (free, very accurate)
-//     → [2nd try] Llama 4 Scout vision          (fallback if Vision fails/unavailable)
-//     → [3rd try] User-friendly error message
+// ── GOOGLE CLOUD VISION OCR ───────────────────────────────────────────────────
+// Free tier: 1,000 pages/month
+// Setup: set GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcp-key.json in .env
+//        run: npm install @google-cloud/vision
+// No pdfjs or canvas needed — Vision API accepts raw PDF bytes directly!
 
-// ── GOOGLE VISION OCR (IMAGES + PDFs) ─────────────────────────────
 let visionClient = null;
-
 try {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     const vision = await import("@google-cloud/vision");
     visionClient = new vision.default.ImageAnnotatorClient();
-    console.log("✅ Google Vision OCR ready (1,000 pages/month free)");
+    console.log(
+      "✅ Google Cloud Vision OCR ready (free tier: 1,000 pages/month)"
+    );
   } else {
-    console.warn("⚠️ GOOGLE_APPLICATION_CREDENTIALS not set");
+    console.warn(
+      "⚠️  GOOGLE_APPLICATION_CREDENTIALS not set — Google Vision OCR disabled.\n" +
+        "   To enable free OCR: set GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcp-key.json in .env"
+    );
   }
-} catch (err) {
-  console.warn("⚠️ @google-cloud/vision not installed");
+} catch (e) {
+  console.warn(
+    "⚠️  @google-cloud/vision not installed — run: npm install @google-cloud/vision"
+  );
 }
 
-const ocrWithGoogleVision = async (buffer) => {
+// Accepts any buffer (PDF or image) — Google Vision handles both natively
+const ocrWithGoogleVision = async (fileBuffer) => {
   if (!visionClient) return null;
-
   try {
     const [result] = await visionClient.documentTextDetection({
-      image: { content: buffer.toString("base64") },
+      image: { content: fileBuffer.toString("base64") },
     });
-
     const text = result.fullTextAnnotation?.text?.trim() || "";
-
     if (text) {
-      console.log(`✅ Vision extracted ${text.length} characters`);
+      console.log(`✅ Google Vision OCR: extracted ${text.length} characters`);
       return text;
     }
-
+    console.log("ℹ️  Google Vision OCR: no text detected");
     return null;
   } catch (err) {
-    console.error("❌ Vision OCR error:", err.message);
+    console.warn("⚠️  Google Vision OCR error:", err.message);
     return null;
   }
 };
-const ocrPdfWithVision = async (pdfBuffer) => {
-  const bucket = storage.bucket(bucketName);
 
-  const fileName = `uploads/${Date.now()}.pdf`;
-  const file = bucket.file(fileName);
-
-  // Upload PDF
-  await file.save(pdfBuffer, {
-    contentType: "application/pdf",
-  });
-
-  const gcsSourceUri = `gs://${bucketName}/${fileName}`;
-  const gcsDestinationUri = `gs://${bucketName}/output/${Date.now()}/`;
-
-  const request = {
-    requests: [
-      {
-        inputConfig: {
-          gcsSource: { uri: gcsSourceUri },
-          mimeType: "application/pdf",
-        },
-        features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
-        outputConfig: {
-          gcsDestination: { uri: gcsDestinationUri },
-        },
-      },
-    ],
-  };
-
-  const [operation] = await visionClient.asyncBatchAnnotateFiles(request);
-  await operation.promise();
-
-  // Read results
-  const [files] = await bucket.getFiles({
-    prefix: gcsDestinationUri.replace(`gs://${bucketName}/`, ""),
-  });
-
-  let fullText = "";
-
-  for (const outputFile of files) {
-    const [contents] = await outputFile.download();
-    const json = JSON.parse(contents.toString());
-
-    const responses = json.responses || [];
-
-    responses.forEach((res) => {
-      if (res.fullTextAnnotation?.text) {
-        fullText += res.fullTextAnnotation.text + "\n";
-      }
-    });
-  }
-
-  return fullText.trim();
-};
-// ── NEWSAPI: Fetch latest current affairs context ─
+// ── NEWSAPI ───────────────────────────────────────────────────────────────────
 const fetchNewsContext = async (topic) => {
   if (!process.env.NEWS_API_KEY) return "";
   try {
-    // Two parallel searches: topic-specific + India current affairs
     const [topicRes, indiaRes] = await Promise.all([
       fetch(
         `https://newsapi.org/v2/everything?` +
@@ -189,7 +123,6 @@ const fetchNewsContext = async (topic) => {
       indiaRes.json(),
     ]);
 
-    // Merge and deduplicate articles by title
     const seen = new Set();
     const allArticles = [
       ...(topicData.articles || []),
@@ -203,7 +136,6 @@ const fetchNewsContext = async (topic) => {
 
     if (!allArticles.length) return "";
 
-    // Build a clean numbered context block
     const lines = allArticles
       .slice(0, 10)
       .map((a, i) => {
@@ -219,13 +151,12 @@ const fetchNewsContext = async (topic) => {
     return `RECENT NEWS ITEMS (fetched live from the internet):\n${lines}`;
   } catch (err) {
     console.warn("NewsAPI error:", err.message);
-    return ""; // graceful fallback — quiz still generates without context
+    return "";
   }
 };
 
-// ── EXAM-AWARE QUIZ PROMPT ────────────────────────
+// ── QUIZ PROMPT ───────────────────────────────────────────────────────────────
 const getQuizPrompt = (exam, topic, count, contextBlock = "") => {
-  // Shared UPSC GS1-style format rules
   const upscGS1Formats = `
 STYLE REQUIREMENTS (MUST MIRROR REAL UPSC GS PAPER I):
 
@@ -235,16 +166,8 @@ FORMAT 1 — STATEMENT-BASED (60% minimum)
 2. [Conceptual statement]
 3. [Conceptual statement]
 Which of the statements given above is/are correct?"
-
-Options:
-A) 1 only
-B) 1 and 2 only
-C) 2 and 3 only
-D) 1, 2 and 3
-
-Rules:
-- At least ONE statement must be subtly incorrect.
-- Statements must test conceptual clarity, not trivial recall.
+Options: A) 1 only  B) 1 and 2 only  C) 2 and 3 only  D) 1, 2 and 3
+Rules: At least ONE statement must be subtly incorrect.
 
 FORMAT 2 — STATEMENT I / STATEMENT II (20%)
 A) Both Statement I and II are correct and Statement II explains Statement I
@@ -253,114 +176,34 @@ C) Statement I is correct but Statement II is incorrect
 D) Statement I is incorrect but Statement II is correct
 
 FORMAT 3 — MATCH LIST I / LIST II (10%)
-Use STRICT pipe-table format:
-
 List I | List II
 A. Term/Item | 1. Description/Match
 B. Term/Item | 2. Description/Match
 C. Term/Item | 3. Description/Match
-
-Then ask: "How many of the above pairs are correctly matched?"
+"How many of the above pairs are correctly matched?"
 Options: A) Only one  B) Only two  C) Only three  D) All three
-
-STRICT RULES:
-- ALWAYS use pipe symbol (|) with one space on each side
-- Label left column A., B., C. and right column 1., 2., 3.
-- NEVER write inline or paragraph format for match questions
 
 FORMAT 4 — DIRECT (10%)
 One precise factual/conceptual question with 4 distinct options.
 
 DIFFICULTY: 50% Moderate, 40% Hard, 10% Easy
 NEVER use "All of the above" or "None of the above" as options.
-Mimic real UPSC PYQ style (2014–2023). Do NOT copy exact PYQs.
 `;
 
   const examInstructions = {
-    // ── UPSC GS PAPER I ───────────────────────────
-    UPSC: `
-You are a UPSC Civil Services Preliminary Examination question setter for GS Paper I.
-
-Generate questions STRICTLY based on:
-1. UPSC Prelims GS Paper I PYQs (2014–2023)
-2. NCERT textbooks Class 6–12:
-   - Polity: Class 8–12
-   - History: Class 6–12
-   - Geography: Class 6–12
-   - Economy: Class 9–12
-   - Environment & Ecology: Class 7–12
-   - Science & Technology: Class 6–12 basics
-
-ABSOLUTE RESTRICTIONS:
-- DO NOT invent Articles, Acts, committees, or schemes.
-- DO NOT use coaching institute material.
-- Every fact must be verifiable from NCERT or real UPSC PYQs.
-- If unsure about a fact, skip it.
-
+    UPSC: `You are a UPSC Civil Services Preliminary Examination question setter for GS Paper I.
+Generate questions STRICTLY based on UPSC Prelims GS Paper I PYQs (2014–2023) and NCERT textbooks Class 6–12.
+ABSOLUTE RESTRICTIONS: DO NOT invent Articles, Acts, committees, or schemes.
 Topic: "${topic}"
 ${upscGS1Formats}`,
 
-    // ── UPSC CSAT / GS PAPER II ───────────────────
-    CSAT: `
-You are a UPSC Civil Services Preliminary Examination question setter for GS Paper II — CSAT (Civil Services Aptitude Test).
+    CSAT: `You are a UPSC CSAT (Paper II) question setter. Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2023).
+TOPIC: "${topic}"
+Cover: READING COMPREHENSION, LOGICAL REASONING, DECISION MAKING, BASIC NUMERACY, DATA INTERPRETATION, GENERAL MENTAL ABILITY.
+RULES: Every numerical answer uniquely correct. DIFFICULTY: 50% Moderate, 50% Hard. Show full working in explanation.`,
 
-Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2023).
-
-TOPIC REQUESTED: "${topic}"
-
-Cover a MIX from these CSAT areas based on the topic:
-
-1. READING COMPREHENSION
-   - Provide a short passage (5–8 lines) followed by 1 inference/conclusion question.
-   - Passage must be original. Test ability to draw conclusions, identify assumptions, find the author's view.
-   - Questions must be answerable ONLY from the passage — no external knowledge needed.
-
-2. LOGICAL REASONING & ANALYTICAL ABILITY
-   - Syllogisms, logical sequences, assumptions, arguments
-   - Blood relations, direction sense, ranking/ordering puzzles
-   - Coding-decoding, series completion (number/letter/mixed)
-   - Statement-conclusion, statement-assumption, course of action
-
-3. DECISION MAKING & PROBLEM SOLVING
-   - Situation-based questions (administrative/ethical scenarios)
-   - Ask what the BEST course of action is among 4 realistic options
-   - Only one option is clearly the best
-
-4. BASIC NUMERACY (Class X level)
-   - Number systems, percentages, ratios & proportions
-   - Simple & compound interest, profit & loss, time & work
-   - Time-speed-distance, averages, ages
-   - ALWAYS include actual numbers in the question
-   - Explanation MUST show full step-by-step calculation
-
-5. DATA INTERPRETATION (Class X level)
-   - Describe a small table or chart in text with actual values
-   - Ask 1 question on the data (percentage change, ratio, highest/lowest, etc.)
-
-6. GENERAL MENTAL ABILITY
-   - Analogies, odd-one-out, visual/spatial reasoning described in text
-   - Pattern completion, matrix-type questions described in words
-
-STRICT RULES:
-- Every numerical answer must be uniquely correct and verifiable by calculation.
-- For comprehension: passage must come FIRST in the question field, then the question.
-- Options for logical/aptitude questions must be precise (exact numbers or conclusions).
-- DIFFICULTY: 50% Moderate, 50% Hard — no easy questions.
-- NEVER use "All of the above" or "None of the above".
-- Explanation must show full working/reasoning for every question.
-- Do NOT repeat question types — mix all 6 categories evenly.
-`,
-
-    // ── CURRENT AFFAIRS (NewsAPI-powered) ─────────
-    "Current Affairs": `
-You are a UPSC Civil Services Preliminary Examination question setter specialising in Current Affairs.
-
-You have been provided with REAL, FRESH news fetched live from the internet right now.
-Use this context as the PRIMARY source for generating questions.
-Do NOT rely on your training data for facts — trust the context below instead.
-
+    "Current Affairs": `You are a UPSC Current Affairs question setter. Use the LIVE CONTEXT below as PRIMARY source.
 Topic: "${topic}"
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LIVE CONTEXT FROM THE WEB:
 ${
@@ -368,302 +211,53 @@ ${
   "⚠️ No live context available — use your best known recent facts on this topic for UPSC."
 }
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-INSTRUCTIONS:
-1. Extract specific facts, names, dates, numbers, and events from the context above.
-2. Build UPSC-style MCQ questions around those facts.
-3. Every question must be directly traceable to the context provided.
-4. If the context mentions an index, rank, scheme, treaty, summit, or appointment — make a question on it.
-5. Wrong options (distractors) must be plausible but clearly incorrect based on the context.
-6. Explanation must reference the specific fact from the context and explain why it matters for UPSC.
-
-COVER THESE DIMENSIONS as relevant to the topic:
-- Government schemes, policies, bills, and appointments
-- International relations, treaties, summits, global institutions (UN, IMF, WB, WTO, WHO)
-- Economy & Finance — RBI decisions, budget, indices
-- Science & Technology — Space (ISRO), defence, AI/digital, health
-- Environment & Ecology — Climate summits, endangered species, national parks
-- Sports & Culture — Awards (Padma, Nobel), UNESCO heritage
-- India & World Rankings — Global indices (HDI, Press Freedom, Hunger Index, etc.)
-
 ${upscGS1Formats}`,
 
-    // ── JEE ───────────────────────────────────────
-    JEE: `
-You are a JEE Main/Advanced question setter. Generate challenging questions on "${topic}".
+    JEE: `You are a JEE Main/Advanced question setter. Generate challenging questions on "${topic}".
+Use a MIX of: Numerical-based MCQ, Concept application, Common misconception traps, Graph/diagram interpretation.
+RULES: Include actual numerical values. Options differ by small margins. 60% hard, 40% medium. Show key formula in explanation.`,
 
-Use a MIX of:
-1. Numerical-based MCQ (real numbers, calculations required)
-2. Concept application (2 concepts combined)
-3. Common misconception traps
-4. Graph/diagram interpretation (described in text)
+    NEET: `You are a NEET UG question setter. Generate questions on "${topic}" strictly from NCERT syllabus.
+Use a MIX of: Assertion-Reason, Diagram/structure based, Statement true/false, Application-based.
+RULES: Every answer traceable to NCERT. Correct scientific nomenclature. 50% hard, 50% medium.`,
 
-STRICT RULES:
-- Include actual numerical values in questions
-- Options must differ by small margins to test precision
-- Mention chapter/concept area in explanation
-- 60% hard, 40% medium
-- Show the key formula or concept in explanation
-`,
+    CAT: `You are a CAT question setter. Generate CAT-level questions on "${topic}".
+Use a MIX of: VARC (Para-jumble, Para-summary, Inference), DILR, QA (Word problems).
+RULES: Options very close. Avoid straightforward computation. Show elimination strategy. 60% hard, 40% medium.`,
 
-    // ── NEET ──────────────────────────────────────
-    NEET: `
-You are a NEET UG question setter. Generate questions on "${topic}" strictly from NCERT syllabus.
+    SSC: `You are an SSC CGL/CHSL question setter. Generate questions on "${topic}".
+Mix: Reasoning, Quant, GK, English.
+RULES: Options tricky. For Quant show shortcut. 40% hard, 60% medium.`,
 
-Use a MIX of:
-1. Assertion-Reason format (common in NEET)
-2. Diagram/structure based (describe diagram in text)
-3. Statement true/false combinations
-4. Application-based (clinical/real-world biology)
+    Banking: `You are an IBPS/SBI PO question setter. Generate questions on "${topic}".
+Mix: Reasoning puzzles, Quant (DI, simplification), Banking Awareness, English.
+RULES: Include at least 2 DI questions. Options numerical and close. 50% hard, 50% medium.`,
 
-STRICT RULES:
-- Every answer must be traceable to NCERT textbook
-- Use correct scientific/biological nomenclature
-- For numerical: show calculation in explanation
-- 50% hard, 50% medium
-- Mention NCERT chapter in explanation
-`,
+    GATE: `You are a GATE question setter. Generate technical questions on "${topic}".
+Mix: Numerical Answer Type, Concept application, Multi-step technical problems.
+RULES: Include formulas and derivations. Options technically precise. 60% hard, 40% medium.`,
 
-    // ── CAT ───────────────────────────────────────
-    CAT: `
-You are a CAT question setter. Generate CAT-level questions on "${topic}".
+    "State PCS": `You are a State PCS Preliminary Examination question setter.
+Generate questions: 60% general topics + 40% state-specific topics.
+Topic received: "${topic}" — Extract STATE NAME before " — " and SUBJECT TOPIC after " — ".
+Generate 40% questions specifically about THAT STATE only. NEVER mix up states.
+STYLE: 50% Statement-based, 20% Direct, 15% Match List, 15% Statement I/II.`,
 
-Use a MIX of:
-1. VARC: Para-jumble, Para-summary, Inference from passage
-2. DILR: Data set interpretation with linked logic
-3. QA: Word problems needing logical + math reasoning
+    "CBSE 10th": `You are a CBSE Class 10 Board Examination question setter.
+Generate questions STRICTLY from NCERT Class 10 textbooks only.
+Mix: 40% MCQ, 25% Short Answer, 20% Case-based/Assertion-Reason, 15% Numerical.
+DIFFICULTY: 60% Easy-Medium, 40% Medium-Hard. Topic: "${topic}"`,
 
-STRICT RULES:
-- Options must be very close to each other
-- Avoid straightforward computation — require reasoning
-- Explanation must show the elimination strategy
-- 60% hard, 40% medium
-`,
+    "CBSE 12th": `You are a CBSE Class 12 Board Examination question setter.
+Generate questions STRICTLY from NCERT Class 12 textbooks only.
+Mix: 35% MCQ, 25% Short Answer, 20% Long Answer/Case-based, 20% Numerical/Derivation.
+DIFFICULTY: 30% Easy, 40% Medium, 30% Hard. Topic: "${topic}"`,
 
-    // ── SSC ───────────────────────────────────────
-    SSC: `
-You are an SSC CGL/CHSL question setter. Generate questions on "${topic}".
-
-Mix: Reasoning (analogy, series, coding-decoding), Quant (percentage, ratio, time-work, profit-loss), GK (static + current affairs), English (error spotting, fill in the blanks).
-
-RULES:
-- Options should be tricky and close
-- For Quant: show shortcut method in explanation
-- 40% hard, 60% medium
-`,
-
-    // ── Banking ───────────────────────────────────
-    Banking: `
-You are an IBPS/SBI PO question setter. Generate questions on "${topic}".
-
-Mix: Reasoning puzzles (seating, ordering), Quant (data interpretation, simplification, approximation), Banking/Financial Awareness, English (reading comprehension inference).
-
-RULES:
-- Include at least 2 data interpretation style questions if topic allows
-- Options must be numerical and close in value
-- Explanation must show step-by-step working
-- 50% hard, 50% medium
-`,
-
-    // ── GATE ──────────────────────────────────────
-    GATE: `
-You are a GATE question setter. Generate technical questions on "${topic}".
-
-Mix:
-1. Numerical Answer Type (give 4 close numerical options)
-2. Concept application requiring derivation
-3. Multi-step technical problems
-
-RULES:
-- Include actual formulas and derivations in explanation
-- Options must be technically precise
-- Mention GATE subject/unit in explanation
-- 60% hard, 40% medium
-`,
-
-    // ── STATE PCS ─────────────────────────────────
-    "State PCS": `
-You are a State Public Service Commission (State PCS) Preliminary Examination question setter.
-
-State PCS exams follow UPSC pattern but with additional focus on STATE-SPECIFIC content.
-Generate questions covering BOTH general topics AND state-specific topics relevant to Indian states.
-
-SYLLABUS COVERAGE:
-
-1. GENERAL TOPICS (same as UPSC GS Paper I — 60% of questions)
-   - Indian History & Culture (Ancient, Medieval, Modern)
-   - Indian & World Geography
-   - Indian Polity & Constitution
-   - Indian Economy & Planning
-   - General Science & Technology
-   - Environment & Ecology
-   - Current Affairs (National)
-
-2. STATE-SPECIFIC TOPICS (40% of questions) — cover these for major states:
-   - State History & Culture — important rulers, dynasties, freedom fighters from the state
-   - State Geography — rivers, mountains, forests, districts, borders
-   - State Economy — major industries, agriculture, irrigation projects, minerals
-   - State Polity — Governor, CM, State Legislature, High Court, Panchayati Raj in the state
-   - State Schemes & Policies — flagship government schemes of the state
-   - State Art, Culture & Festivals — folk dances, music, festivals, handicrafts
-   - State Current Affairs — recent appointments, awards, infrastructure projects
-   - Important state personalities — historical and contemporary
-
-MAJOR STATE PCS EXAMS TO COVER:
-- UPPSC (Uttar Pradesh) — largest PCS exam
-- BPSC (Bihar)
-- MPPSC (Madhya Pradesh)
-- RPSC (Rajasthan)
-- JPSC (Jharkhand)
-- UKPSC (Uttarakhand)
-- HPSC (Haryana)
-- PPSC (Punjab)
-- MPSC (Maharashtra)
-- KPSC (Karnataka)
-- TNPSC (Tamil Nadu)
-- APPSC (Andhra Pradesh)
-- TSPSC (Telangana)
-- OPSC (Odisha)
-- WBPSC (West Bengal)
-
-TOPIC FORMAT (sent by backend):
-"StateName (ExamCode) — SubjectTopic"
-Example: "Uttar Pradesh (UPPSC) — History"
-
-You MUST:
-1. Extract the STATE NAME from before the " — " separator
-2. Extract the SUBJECT TOPIC from after the " — " separator
-3. Generate 40% questions specifically about THAT STATE only
-4. Generate 60% questions on the subject topic at national/NCERT level
-5. NEVER mix up states — if topic says Rajasthan, do NOT generate UP-specific questions
-6. If no " — " separator found, generate general mixed PCS questions
-
-Topic received: "${topic}"
-
-QUESTION FORMAT MIX (mirrors UPSC Prelims style):
-- 50% Statement-based ("Consider the following statements...")
-- 20% Direct factual MCQ
-- 15% Match the following
-- 15% Statement I/II
-
-STRICT RULES:
-- DO NOT invent state schemes, districts, or facts
-- Every state-specific fact must be real and verifiable
-- National facts must be from NCERT or verified sources
-- DIFFICULTY: 40% Easy-Medium (state facts), 60% Medium-Hard (conceptual)
-- NEVER use "All of the above" or "None of the above"
-- Mention which state the question relates to in the explanation
-
-STYLE REQUIREMENTS (mirror UPSC format):
-
-FORMAT 1 — STATEMENT-BASED (50%)
-"Consider the following statements:
-1. [Statement]
-2. [Statement]
-3. [Statement]
-Which of the statements given above is/are correct?"
-Options: A) 1 only  B) 1 and 2 only  C) 2 and 3 only  D) 1, 2 and 3
-
-FORMAT 2 — MATCH LIST (15%)
-List I | List II
-A. Item | 1. Match
-B. Item | 2. Match
-C. Item | 3. Match
-"How many of the above pairs are correctly matched?"
-Options: A) Only one  B) Only two  C) Only three  D) All three
-
-FORMAT 3 — DIRECT (20%)
-Single precise question with 4 distinct options.
-
-FORMAT 4 — STATEMENT I/II (15%)
-A) Both correct and II explains I
-B) Both correct but II does not explain I
-C) I correct but II incorrect
-D) I incorrect but II correct
-
-NEVER use "All of the above" or "None of the above".
-`,
-
-    // ── CBSE 10th ─────────────────────────────────
-    "CBSE 10th": `
-You are a CBSE Class 10 Board Examination question setter.
-
-Generate questions STRICTLY based on:
-1. NCERT Class 10 textbooks ONLY
-   - Mathematics: Real Numbers, Polynomials, Linear Equations, Triangles, Circles, Arithmetic Progressions, Trigonometry, Statistics, Probability, Surface Areas & Volumes
-   - Science: Chemical Reactions, Acids/Bases/Salts, Metals & Non-metals, Carbon Compounds, Life Processes, Control & Coordination, Heredity, Light, Electricity, Magnetic Effects, Environment
-   - Social Science: History (Nationalism, Industrialisation, Print Culture), Geography (Resources, Agriculture, Water, Minerals), Political Science (Power Sharing, Democracy), Economics (Development, Money, Globalisation)
-   - English: Grammar (tenses, voice, reported speech, clauses), Literature (First Flight, Footprints Without Feet)
-
-2. CBSE Class 10 Board PYQs (2018–2024)
-
-QUESTION FORMAT MIX:
-- 40% MCQ (1 mark) — direct concept, one clearly correct answer
-- 25% Short Answer (2–3 marks) — ask to explain or give 2 examples
-- 20% Case-based / Assertion-Reason
-- 15% Numerical problems (Maths/Science only)
-
-STRICT RULES:
-- Language must be simple and clear (Class 10 level)
-- Every fact must be from NCERT Class 10 only — do not use Class 11/12 concepts
-- For Science: mention the chapter name in explanation
-- For Maths: show full step-by-step solution in explanation
-- For assertion-reason use format:
-  A) Both A and R are true and R is the correct explanation of A
-  B) Both A and R are true but R is NOT the correct explanation of A
-  C) A is true but R is false
-  D) A is false but R is true
-- DIFFICULTY: 60% Easy-Medium, 40% Medium-Hard (Board level)
-- NEVER use "All of the above" or "None of the above"
-
-Topic: "${topic}"
-`,
-
-    // ── CBSE 12th ─────────────────────────────────
-    "CBSE 12th": `
-You are a CBSE Class 12 Board Examination question setter.
-
-Generate questions STRICTLY based on:
-1. NCERT Class 12 textbooks ONLY
-   - Physics: Electric Charges, Current Electricity, Magnetism, EMI, Optics, Dual Nature, Atoms, Nuclei, Semiconductors
-   - Chemistry: Solutions, Electrochemistry, Chemical Kinetics, Surface Chemistry, p/d/f Block Elements, Coordination Compounds, Haloalkanes, Alcohols, Aldehydes, Amines, Biomolecules, Polymers
-   - Mathematics: Relations & Functions, Inverse Trig, Matrices, Determinants, Continuity, Differentiation, Integration, Differential Equations, Vectors, 3D Geometry, Linear Programming, Probability
-   - Biology: Reproduction, Genetics & Evolution, Biology in Human Welfare, Biotechnology, Ecology
-   - Accountancy: Partnership, Company Accounts, Cash Flow, Analysis of Financial Statements
-   - Economics: Macro (National Income, Money, Banking, Government Budget, Balance of Payments) + Micro (Consumer, Producer, Market)
-   - Political Science, History, Geography — as per NCERT Class 12
-
-2. CBSE Class 12 Board PYQs (2018–2024)
-
-QUESTION FORMAT MIX:
-- 35% MCQ (1 mark) — concept-based, one mark, no ambiguity
-- 25% Short Answer (2–3 marks)
-- 20% Long Answer / Case-based (4–5 marks) — break into sub-parts (i), (ii), (iii)
-- 20% Numerical / Derivation (Physics, Chemistry, Maths, Economics)
-
-STRICT RULES:
-- Every fact must come from NCERT Class 12 — do not mix Class 11 concepts unless explicitly asked
-- For Physics/Chemistry/Maths: show complete working in explanation with formulas
-- For Biology: use correct scientific nomenclature, mention chapter
-- For Accountancy/Economics: show journal entries or calculations where needed
-- For case-based questions: provide a short scenario/paragraph first, then 2–3 sub-questions
-- DIFFICULTY: 30% Easy, 40% Medium, 30% Hard (Board + competitive awareness)
-- NEVER use "All of the above" or "None of the above"
-
-Topic: "${topic}"
-`,
-
-    // ── General ───────────────────────────────────
-    General: `
-Generate clear, well-structured MCQ questions on "${topic}".
-Mix easy, medium and hard difficulty. Make distractors plausible but clearly distinguishable.
-Explanation should be educational and 2-3 sentences.
-`,
+    General: `Generate clear, well-structured MCQ questions on "${topic}". Mix easy, medium and hard. Make distractors plausible. Explanation 2-3 sentences.`,
   };
 
   const instruction = examInstructions[exam] || examInstructions["General"];
 
-  // Build mandatory per-question format plan for UPSC GS1 and Current Affairs
   const buildGS1FormatPlan = (n) => {
     const pattern = [
       "STATEMENT-BASED",
@@ -684,7 +278,6 @@ Explanation should be educational and 2-3 sentences.
       .join("\n");
   };
 
-  // Build mandatory CSAT format plan
   const buildCSATFormatPlan = (n) => {
     const pattern = [
       "READING-COMPREHENSION",
@@ -706,60 +299,41 @@ Explanation should be educational and 2-3 sentences.
   };
 
   let formatPlan = "";
-
   if (exam === "UPSC" || exam === "Current Affairs") {
-    formatPlan = `
-MANDATORY FORMAT ASSIGNMENT — FOLLOW EXACTLY, NO EXCEPTIONS:
-${buildGS1FormatPlan(count)}
-
-WHAT EACH FORMAT MEANS:
-- STATEMENT-BASED: "Consider the following statements: 1. ... 2. ... 3. ..." → "Which of the statements given above is/are correct?" with options like "1 only", "1 and 2 only", "2 and 3 only", "1, 2 and 3"
-- STATEMENT-I/II: "Statement I: ... Statement II: ..." → 4 fixed options about correctness and whether II explains I
-- MATCH-LIST: Two-column pipe-table (List I | List II) → "How many pairs are correctly matched?" with "Only one / Only two / Only three / All three"
-- DIRECT: Single precise factual question with 4 distinct answer options
-`;
+    formatPlan = `\nMANDATORY FORMAT ASSIGNMENT:\n${buildGS1FormatPlan(
+      count
+    )}\n`;
   } else if (exam === "CSAT") {
-    formatPlan = `
-MANDATORY FORMAT ASSIGNMENT — FOLLOW EXACTLY, NO EXCEPTIONS:
-${buildCSATFormatPlan(count)}
-
-WHAT EACH FORMAT MEANS:
-- READING-COMPREHENSION: Write a short passage (5–8 lines) in the question field, then ask ONE inference/conclusion question about it
-- LOGICAL-REASONING: Syllogism, coding-decoding, series, blood relation, direction sense, or statement-conclusion puzzle
-- NUMERACY: A word problem with actual numbers requiring calculation (%, ratio, SI/CI, profit-loss, time-work, speed-distance)
-- DATA-INTERPRETATION: Describe a small table or chart in text with actual numbers, then ask ONE analytical question on it
-- DECISION-MAKING: An administrative or ethical situation with 4 realistic response options — only one is clearly best
-- MENTAL-ABILITY: Analogy, odd-one-out, pattern, or matrix question described in words
-`;
+    formatPlan = `\nMANDATORY FORMAT ASSIGNMENT:\n${buildCSATFormatPlan(
+      count
+    )}\n`;
   }
 
   return `${instruction}${formatPlan}
 
 Generate EXACTLY ${count} questions on the topic: "${topic}" for ${exam} exam.
 
-Return ONLY a valid JSON array. No markdown, no extra text, no explanation outside JSON.
+Return ONLY a valid JSON array. No markdown, no extra text.
 Format:
 [
   {
     "question": "Full question text here",
     "options": ["A) option1", "B) option2", "C) option3", "D) option4"],
     "correct": 0,
-    "explanation": "Detailed explanation with specific citations, calculations, or reasoning. Minimum 2–3 sentences.",
+    "explanation": "Detailed explanation. Minimum 2-3 sentences.",
     "questionType": "statement-based | statement-I-II | match-list | direct | comprehension | logical | numeracy | data-interpretation | decision-making | mental-ability | current-affairs"
   }
 ]
-
 - "correct" is the 0-based index (0=A, 1=B, 2=C, 3=D)
-- Explanation must cite the specific fact/law/chapter/calculation that makes it correct and why others are wrong
 - Return exactly ${count} questions, no more, no less
 - NEVER use "All of the above" or "None of the above" as options`;
 };
 
-// ── BASIC ─────────────────────────────────────────
+// ── BASIC ─────────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("✅ Backend running"));
 app.get("/health", (req, res) => res.send("Server alive"));
 
-// ── CHAT HISTORY ──────────────────────────────────
+// ── CHAT HISTORY ──────────────────────────────────────────────────────────────
 app.get("/chats/:userId", async (req, res) => {
   try {
     const chats = await getChats()
@@ -816,7 +390,7 @@ app.delete("/chats/:userId/:chatId", async (req, res) => {
   }
 });
 
-// ── CHAT ──────────────────────────────────────────
+// ── CHAT ──────────────────────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
   const { question, exam, history = [], userId, chatId } = req.body;
   if (!question) return res.status(400).json({ error: "Question is required" });
@@ -853,36 +427,26 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// ── GROQ CALL WITH MODEL FALLBACK CHAIN ──────────
-//
-// Model tier strategy (cheapest → most capable):
-//   1. llama-3.1-8b-instant   — tiny, very fast, low token cost  (try first)
-//   2. llama-3.2-11b-text-preview — mid-size fallback
-//   3. llama-3.3-70b-versatile — full power, most tokens         (last resort)
-//
-// If a model hits a rate limit (429) we immediately try the next one.
-// This way daily TPD is spread across models instead of burning one.
+// ── GROQ FALLBACK CHAIN ───────────────────────────────────────────────────────
+// ── MODEL CONFIG ─────────────────────────────────────────────────────────────
+// GPT-4o = primary (best accuracy for UPSC/exam questions)
+// Groq models = free fallback chain
 
 const GROQ_MODELS = [
-  { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 3000 }, // 30K TPM, try first
-  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", maxTokens: 3000 }, // fallback
-  { id: "llama-3.3-70b-versatile", maxTokens: 4096 }, // last resort (Llama 3 backup)
+  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", maxTokens: 3000 },
+  { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 3000 },
+  { id: "llama-3.3-70b-versatile", maxTokens: 4096 },
 ];
 
-// Extra tokens needed when the prompt contains live news context
 const CONTEXT_EXTRA_TOKENS = 2000;
-
-// Simple in-memory per-user rate limiter (resets every hour)
-// Prevents a single user from burning the whole daily quota
 const userQuizCounts = new Map();
-const USER_HOURLY_LIMIT = 15; // max quiz generates per user per hour
+const USER_HOURLY_LIMIT = 15;
 
 const checkUserRateLimit = (userId) => {
-  if (!userId) return true; // anonymous — allow but don't track
+  if (!userId) return true;
   const now = Date.now();
   const entry = userQuizCounts.get(userId);
   if (!entry || now - entry.windowStart > 60 * 60 * 1000) {
-    // New window
     userQuizCounts.set(userId, { count: 1, windowStart: now });
     return true;
   }
@@ -891,6 +455,52 @@ const checkUserRateLimit = (userId) => {
   return true;
 };
 
+// GPT-4o — primary, best accuracy
+// GPT-5.2 — Primary Model
+const callGPT52 = async (prompt, hasContext = false) => {
+  if (!process.env.OPENAI_API_KEY) return null;
+
+  const maxTokens = 3000 + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.2",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (response.status === 429) {
+      console.warn("⚠️ GPT-5.2 rate limited — falling back to Groq...");
+      return null;
+    }
+
+    if (!response.ok) {
+      const e = await response.json().catch(() => ({}));
+      console.warn("⚠️ GPT-5.2 error:", e.error?.message);
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) return null;
+
+    console.log("✅ Quiz generated using model: gpt-5.2");
+    return content;
+  } catch (err) {
+    console.warn("⚠️ GPT-5.2 failed:", err.message);
+    return null;
+  }
+};
+
+// Groq fallback chain — free models
 const callGroqWithFallback = async (prompt, hasContext = false) => {
   let lastError = null;
   for (const model of GROQ_MODELS) {
@@ -912,94 +522,79 @@ const callGroqWithFallback = async (prompt, hasContext = false) => {
           }),
         }
       );
-
-      // Rate limited on this model → try next
       if (response.status === 429) {
-        const errData = await response.json().catch(() => ({}));
+        const e = await response.json().catch(() => ({}));
         console.warn(`⚠️  ${model.id} rate limited — trying next model...`);
-        lastError = errData.error?.message || `Rate limit on ${model.id}`;
+        lastError = e.error?.message;
         continue;
       }
-
-      // Any other HTTP error → throw immediately (not a rate limit issue)
       if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(
-          errData.error?.message || `Groq error: ${response.status}`
-        );
+        const e = await response.json().catch(() => ({}));
+        throw new Error(e.error?.message || `Groq error: ${response.status}`);
       }
-
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content?.trim();
       if (!content) throw new Error("Empty response from AI");
-
       console.log(`✅ Quiz generated using model: ${model.id}`);
       return content;
     } catch (err) {
-      // If it's a rate limit we already handled above; re-throw anything else
-      if (!err.message.includes("Rate limit")) throw err;
+      if (!err.message?.includes("Rate limit")) throw err;
       lastError = err.message;
     }
   }
-
-  // All models exhausted
   throw new Error(
-    `All models are currently rate limited. Please wait a few minutes and try again. (${lastError})`
+    `All models are currently rate limited. Please wait a few minutes. (${lastError})`
   );
 };
 
-// ── QUIZ ──────────────────────────────────────────
+// Main entry — GPT-4o first, Groq fallback
+const generateQuizContent = async (prompt, hasContext = false) => {
+  const gptResult = await callGPT52(prompt, hasContext);
+  if (gptResult) return gptResult;
+  return callGroqWithFallback(prompt, hasContext);
+};
+
+// ── QUIZ ──────────────────────────────────────────────────────────────────────
 app.post("/quiz/generate", async (req, res) => {
   const { topic, exam = "General", count = 10, userId, state } = req.body;
   if (!topic) return res.status(400).json({ error: "Topic is required" });
 
-  // State PCS requires a state to be selected
   if (exam === "State PCS" && !state) {
     return res
       .status(400)
       .json({ error: "Please select a state for State PCS quiz." });
   }
 
-  // Per-user hourly rate limit
   if (!checkUserRateLimit(userId)) {
     return res.status(429).json({
-      error: `You've generated ${USER_HOURLY_LIMIT} quizzes this hour. Please wait before generating more.`,
+      error: `You've generated ${USER_HOURLY_LIMIT} quizzes this hour. Please wait.`,
     });
   }
 
-  // Cap count to 10 to avoid huge token usage
   const safeCount = Math.min(Number(count) || 10, 10);
-
-  // For State PCS: prepend the selected state to the topic
   const finalTopic =
     exam === "State PCS" && state ? `${state} — ${topic}` : topic;
 
-  // Fetch live NewsAPI context ONLY for Current Affairs
   let contextBlock = "";
   if (exam === "Current Affairs") {
     console.log(`📰 Fetching NewsAPI context for: "${finalTopic}"`);
     contextBlock = await fetchNewsContext(finalTopic);
-    if (contextBlock) {
-      console.log("✅ NewsAPI context fetched successfully");
-    } else {
-      console.warn(
-        "⚠️  NewsAPI returned no context — falling back to model knowledge"
-      );
-    }
+    console.log(
+      contextBlock
+        ? "✅ NewsAPI context fetched"
+        : "⚠️  No NewsAPI context — using model knowledge"
+    );
   }
 
   const prompt = getQuizPrompt(exam, finalTopic, safeCount, contextBlock);
 
   try {
-    let content = await callGroqWithFallback(prompt, !!contextBlock);
+    let content = await generateQuizContent(prompt, !!contextBlock);
 
-    // Step 1: Strip markdown
     content = content
       .replace(/```json\s*/gi, "")
       .replace(/```\s*/g, "")
       .trim();
-
-    // Step 2: FIX CONTROL CHARACTERS BEFORE ANYTHING ELSE
     content = content.replace(/"((?:[^"\\]|\\.)*)"/g, (match, inner) => {
       const fixed = inner
         .replace(/\n/g, "\\n")
@@ -1009,16 +604,13 @@ app.post("/quiz/generate", async (req, res) => {
       return `"${fixed}"`;
     });
 
-    // Step 3: Extract JSON array
     const arrayMatch = content.match(/\[[\s\S]*\]/);
     if (!arrayMatch) throw new Error("No JSON array found in response");
 
-    // Step 4: Parse
     let questions;
     try {
       questions = JSON.parse(arrayMatch[0]);
     } catch (e) {
-      // Last resort: aggressive strip of ALL control chars
       const cleaned = arrayMatch[0].replace(/[\u0000-\u001F\u007F]/g, (c) => {
         if (c === "\n") return "\\n";
         if (c === "\t") return "\\t";
@@ -1035,13 +627,10 @@ app.post("/quiz/generate", async (req, res) => {
     });
   } catch (err) {
     console.error("Quiz error:", err.message);
-
     const isRateLimit =
       err.message.toLowerCase().includes("rate limit") ||
-      err.message.toLowerCase().includes("rate limited") ||
       err.message.toLowerCase().includes("tpd") ||
       err.message.toLowerCase().includes("429");
-
     res.status(isRateLimit ? 429 : 500).json({
       error: isRateLimit
         ? "The AI service is temporarily busy. Please wait a few minutes and try again."
@@ -1083,7 +672,7 @@ app.get("/quiz/history/:userId", async (req, res) => {
   }
 });
 
-// ── STUDY PLANNER ─────────────────────────────────
+// ── STUDY PLANNER ─────────────────────────────────────────────────────────────
 app.post("/planner/generate", async (req, res) => {
   const { exam, examDate, topics, hoursPerDay = 4, userId } = req.body;
   if (!exam || !examDate)
@@ -1124,12 +713,11 @@ Return ONLY valid JSON, no markdown, no extra text:
     }
   ]
 }
-
 Rules:
-- Generate EXACTLY ${planDays} day objects, no more, no less
+- Generate EXACTLY ${planDays} day objects
 - Last 2 days = full revision
 - Date for day 1 = ${today.toISOString().split("T")[0]}
-- Keep each day's data SHORT — focus max 5 words, topics max 2 items, revisionTip max 10 words
+- Keep each day's data SHORT
 - Return only the JSON object, nothing else`;
 
   try {
@@ -1250,13 +838,15 @@ app.delete("/planner/:userId/:plannerId", async (req, res) => {
   }
 });
 
-// ── IMAGE ROUTE ───────────────────────────────────
-// ── IMAGE & PDF ROUTE ─────────────────────────────────────────────
+// ── IMAGE / PDF ROUTE ─────────────────────────────────────────────────────────
+// Pipeline:
+//   PDF (digital)  → unpdf text extraction → askAI
+//   PDF (scanned)  → Google Vision OCR     → askAI
+//   PDF (fallback) → Llama vision          → askAI
+//   Image          → Llama vision          → askAI
 app.post("/image", upload.single("image"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "File required" });
-    }
+    if (!req.file) return res.status(400).json({ error: "File required" });
 
     const allowedTypes = [
       "image/jpeg",
@@ -1264,69 +854,67 @@ app.post("/image", upload.single("image"), async (req, res) => {
       "image/webp",
       "application/pdf",
     ];
+    if (!allowedTypes.includes(req.file.mimetype))
+      return res.status(400).json({ error: "Only JPEG/PNG/WEBP/PDF allowed" });
 
-    if (!allowedTypes.includes(req.file.mimetype)) {
-      return res.status(400).json({
-        error: "Only JPEG, PNG, WEBP, or PDF allowed",
-      });
-    }
-
-    let extractedText = null;
-
-    // ───────── PDF HANDLING ─────────
+    // ── PDF ───────────────────────────────────────────────────────────────────
     if (req.file.mimetype === "application/pdf") {
-      console.log("📄 PDF uploaded");
-
-      // STEP 1 — Try digital extraction (fast + free)
+      // Step 1: Digital PDF — fast text extraction via unpdf
       try {
         const uint8 = new Uint8Array(req.file.buffer);
         const { text } = await extractText(uint8, { mergePages: true });
-
         if (text?.trim()) {
-          console.log("✅ Digital PDF — extracted via unpdf");
-          extractedText = text;
+          console.log("✅ Digital PDF — text extracted via unpdf");
+          const answer = await askAI(text.slice(0, 4000), req.body.exam);
+          return res.json({ answer, source: "text-extraction" });
         }
+      } catch (e) {
+        console.log("📄 Text extraction failed:", e.message);
+      }
+
+      // Step 2: Scanned PDF — Google Vision (no canvas/pdfjs needed, accepts raw PDF bytes)
+      if (visionClient) {
+        console.log("🔍 Sending scanned PDF to Google Vision OCR...");
+        const visionText = await ocrWithGoogleVision(req.file.buffer);
+        if (visionText) {
+          console.log("✅ Scanned PDF answered via Google Vision OCR");
+          const answer = await askAI(visionText.slice(0, 4000), req.body.exam);
+          return res.json({ answer, source: "google-vision-ocr" });
+        }
+      }
+
+      // Step 3: Fallback — Llama vision
+      try {
+        console.log("↩️  Falling back to Llama vision...");
+        const answer = await askAIWithImage(
+          req.file.buffer,
+          "application/pdf",
+          req.body.exam
+        );
+        return res.json({ answer, source: "vision-ocr" });
       } catch (err) {
-        console.log("⚠️ unpdf failed:", err.message);
-      }
-
-      // STEP 2 — If scanned PDF → use async Vision
-      if (!extractedText) {
-        console.log("🔍 Scanned PDF — using Vision async OCR...");
-        extractedText = await ocrPdfWithVision(req.file.buffer);
+        console.error("❌ Llama vision fallback failed:", err.message);
+        return res.json({
+          answer:
+            "📸 Could not read this scanned PDF. Please take a clear photo of the document using the camera button for best results!",
+        });
       }
     }
 
-    // ───────── IMAGE HANDLING ─────────
-    else {
-      console.log("🖼 Image uploaded — using Vision OCR...");
-      extractedText = await ocrWithGoogleVision(req.file.buffer);
-    }
-
-    if (!extractedText) {
-      return res.json({
-        answer:
-          "📸 Could not extract readable text. Please upload a clearer image or PDF.",
-      });
-    }
-
-    console.log(`✅ Final extracted text length: ${extractedText.length}`);
-
-    const trimmedText = extractedText.slice(0, 5000);
-
-    const answer = await askAI(trimmedText, req.body.exam);
-
-    res.json({
-      answer,
-      source: "google-vision",
-    });
+    // ── IMAGE (JPEG / PNG / WEBP) ─────────────────────────────────────────────
+    const answer = await askAIWithImage(
+      req.file.buffer,
+      req.file.mimetype,
+      req.body.exam
+    );
+    res.json({ answer, source: "vision" });
   } catch (err) {
-    console.error("File processing error:", err.message);
+    console.error("File error:", err.message);
     res.status(500).json({ error: "File processing failed" });
   }
 });
 
-// ── TTS ───────────────────────────────────────────
+// ── TTS ───────────────────────────────────────────────────────────────────────
 const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
 app.post("/speak", async (req, res) => {
   const { text, voice } = req.body;
@@ -1348,7 +936,7 @@ app.post("/speak", async (req, res) => {
   }
 });
 
-// ── TRANSCRIPTION ─────────────────────────────────
+// ── TRANSCRIPTION ─────────────────────────────────────────────────────────────
 app.post("/transcribe", upload.single("audio"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "Audio required" });
@@ -1374,7 +962,7 @@ app.post("/transcribe", upload.single("audio"), async (req, res) => {
   }
 });
 
-// ── ERROR HANDLERS ────────────────────────────────
+// ── ERROR HANDLERS ────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));
 app.use((err, req, res, next) =>
   res.status(500).json({ error: "Internal server error" })
