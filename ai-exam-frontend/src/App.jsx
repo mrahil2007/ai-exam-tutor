@@ -58,7 +58,6 @@ const EXAMS = [
   "CAT",
 ];
 
-// List of states for State PCS dropdown
 const STATE_PCS_LIST = [
   "Uttar Pradesh (UPPSC)",
   "Bihar (BPSC)",
@@ -80,7 +79,6 @@ const STATE_PCS_LIST = [
   "Chhattisgarh (CGPSC)",
 ];
 
-// Topic placeholder per exam type
 const TOPIC_PLACEHOLDERS = {
   General: "e.g. Photosynthesis, Indian History...",
   UPSC: "e.g. Indian Polity, Medieval History, Geography...",
@@ -363,8 +361,6 @@ function ExamSelectScreen({ onSelect, currentExam }) {
               : "Select your target exam to begin"}
           </div>
         </div>
-
-        {/* Grid — 2 columns */}
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
         >
@@ -443,7 +439,6 @@ function ExamSelectScreen({ onSelect, currentExam }) {
             );
           })}
         </div>
-
         {currentExam && (
           <button
             onClick={() => handleSelect(currentExam)}
@@ -951,7 +946,7 @@ function SmartQuestionDisplay({ question }) {
 function QuizScreen({ exam, API_URL }) {
   const [screen, setScreen] = useState("setup");
   const [topic, setTopic] = useState("");
-  const [selectedState, setSelectedState] = useState(""); // ← State PCS state
+  const [selectedState, setSelectedState] = useState("");
   const [count, setCount] = useState(10);
   const [questions, setQuestions] = useState([]);
   const [current, setCurrent] = useState(0);
@@ -963,7 +958,6 @@ function QuizScreen({ exam, API_URL }) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
 
-  // Reset state selector when exam changes
   useEffect(() => {
     setSelectedState("");
     setTopic("");
@@ -990,7 +984,6 @@ function QuizScreen({ exam, API_URL }) {
           exam,
           count,
           userId: USER_ID,
-          // Pass state separately — backend joins them as "State (Code) — Topic"
           ...(exam === "State PCS" && selectedState
             ? { state: selectedState }
             : {}),
@@ -1100,7 +1093,6 @@ function QuizScreen({ exam, API_URL }) {
         overflow: "hidden",
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -1131,9 +1123,7 @@ function QuizScreen({ exam, API_URL }) {
           📊 History
         </button>
       </div>
-
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px" }}>
-        {/* ── SETUP SCREEN ── */}
         {screen === "setup" && (
           <div
             style={{
@@ -1155,8 +1145,6 @@ function QuizScreen({ exam, API_URL }) {
                 Test your knowledge with AI-generated questions
               </div>
             </div>
-
-            {/* ── STATE SELECTOR — only shown for State PCS ── */}
             {exam === "State PCS" && (
               <div>
                 <label
@@ -1196,7 +1184,6 @@ function QuizScreen({ exam, API_URL }) {
                       </option>
                     ))}
                   </select>
-                  {/* Dropdown arrow */}
                   <svg
                     style={{
                       position: "absolute",
@@ -1234,8 +1221,6 @@ function QuizScreen({ exam, API_URL }) {
                 )}
               </div>
             )}
-
-            {/* Topic input */}
             <div>
               <label
                 style={{
@@ -1268,8 +1253,6 @@ function QuizScreen({ exam, API_URL }) {
                 }}
               />
             </div>
-
-            {/* CBSE hint */}
             {(exam === "CBSE 10th" || exam === "CBSE 12th") && (
               <div
                 style={{
@@ -1285,8 +1268,6 @@ function QuizScreen({ exam, API_URL }) {
                 {exam === "CBSE 10th" ? "Class 10" : "Class 12"} syllabus
               </div>
             )}
-
-            {/* State PCS hint */}
             {exam === "State PCS" && selectedState && (
               <div
                 style={{
@@ -1302,8 +1283,6 @@ function QuizScreen({ exam, API_URL }) {
                 {selectedState.split(" ")[0]} · 60% general PCS topics
               </div>
             )}
-
-            {/* Question count */}
             <div>
               <label
                 style={{
@@ -1339,7 +1318,6 @@ function QuizScreen({ exam, API_URL }) {
                 ))}
               </div>
             </div>
-
             {error && (
               <div
                 style={{
@@ -1354,7 +1332,6 @@ function QuizScreen({ exam, API_URL }) {
                 {error}
               </div>
             )}
-
             <button
               onClick={startQuiz}
               style={{
@@ -1388,8 +1365,6 @@ function QuizScreen({ exam, API_URL }) {
             </button>
           </div>
         )}
-
-        {/* ── LOADING ── */}
         {screen === "loading" && (
           <div
             style={{
@@ -1422,8 +1397,6 @@ function QuizScreen({ exam, API_URL }) {
             </div>
           </div>
         )}
-
-        {/* ── PLAYING ── */}
         {screen === "playing" && q && (
           <div
             style={{
@@ -1612,8 +1585,6 @@ function QuizScreen({ exam, API_URL }) {
             )}
           </div>
         )}
-
-        {/* ── RESULT ── */}
         {screen === "result" && (
           <div
             style={{
@@ -1788,8 +1759,6 @@ function QuizScreen({ exam, API_URL }) {
             </div>
           </div>
         )}
-
-        {/* ── HISTORY ── */}
         {screen === "history" && (
           <div style={{ maxWidth: 480, margin: "0 auto" }}>
             <div
@@ -2826,6 +2795,10 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   const [showSidebar, setShowSidebar] = useState(false);
   const [loadingChats, setLoadingChats] = useState(false);
 
+  // ── NEW: pending file states ──
+  const [pendingFile, setPendingFile] = useState(null);
+  const [filePrompt, setFilePrompt] = useState("");
+
   const messagesEndRef = useRef(null),
     textareaRef = useRef(null),
     fileInputRef = useRef(null),
@@ -2864,6 +2837,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
   };
+
   const loadChatList = async () => {
     setLoadingChats(true);
     try {
@@ -2872,6 +2846,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     } catch (e) {}
     setLoadingChats(false);
   };
+
   const createNewChat = async (examType = exam) => {
     try {
       const res = await fetch(`${API_URL}/chats/${USER_ID}`, {
@@ -2890,6 +2865,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       return null;
     }
   };
+
   const loadChat = async (chatId) => {
     try {
       const res = await fetch(`${API_URL}/chats/${USER_ID}/${chatId}`);
@@ -2901,6 +2877,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       showToast("⚠️ Failed to load chat.");
     }
   };
+
   const deleteChat = async (chatId, e) => {
     e.stopPropagation();
     try {
@@ -2914,6 +2891,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       await loadChatList();
     } catch (e) {}
   };
+
   const buildHistory = (msgs) =>
     msgs
       .filter((m) => m.content?.trim())
@@ -2978,19 +2956,53 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     await sendMessageWithText(input.trim(), false);
   };
 
-  const handleFileUpload = async (file) => {
+  // ── CHANGE 1: just store the file, show preview + prompt box ──
+  const handleFileUpload = (file) => {
     if (!file || loading) return;
-    setLoading(true);
+    setPendingFile(file);
+    setShowAttachMenu(false);
+  };
+
+  // ── CHANGE 2: send file + optional prompt together ──
+  const sendFileWithPrompt = async () => {
+    if (!pendingFile || loading) return;
+    const file = pendingFile;
+    const prompt = filePrompt.trim();
     const isPdf = file.type === "application/pdf";
+    const imageUrl = isPdf ? null : URL.createObjectURL(file);
+
+    setPendingFile(null);
+    setFilePrompt("");
+    setLoading(true);
+
+    let activeChatId = currentChatIdRef.current;
+    if (!activeChatId) {
+      activeChatId = await createNewChat(exam);
+      if (!activeChatId) {
+        setLoading(false);
+        return;
+      }
+    }
+
+    // ── CHANGE 3: store imageUrl for chat bubble preview ──
     setMessages((p) => [
       ...p,
-      { role: "user", content: isPdf ? "📄 PDF sent" : "📷 Image sent" },
+      {
+        role: "user",
+        content: isPdf ? `📄 ${file.name}` : "",
+        imageUrl,
+        filePrompt: prompt || null,
+      },
       { role: "assistant", content: "" },
     ]);
+
     try {
       const formData = new FormData();
       formData.append("image", file);
       formData.append("exam", exam);
+      formData.append("chatId", activeChatId);
+      if (prompt) formData.append("prompt", prompt);
+
       const res = await fetch(`${API_URL}/image`, {
         method: "POST",
         body: formData,
@@ -3000,7 +3012,10 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         typeof data?.answer === "string" && data.answer.trim()
           ? data.answer.trim()
           : "⚠️ Could not process file.";
-      typeText(answer, setMessages, () => setLoading(false));
+      typeText(answer, setMessages, () => {
+        setLoading(false);
+        loadChatList();
+      });
     } catch {
       setMessages((p) => [
         ...p.slice(0, -1),
@@ -3120,6 +3135,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       mediaRecorderRef.current = null;
     }
   };
+
   const formatDate = (dateStr) => {
     const date = new Date(dateStr),
       diff = new Date() - date,
@@ -3129,6 +3145,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     if (days < 7) return `${days} days ago`;
     return date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   };
+
   const isEmpty = messages.length === 0;
 
   return (
@@ -3156,6 +3173,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
           }}
         />
       )}
+
       {/* SIDEBAR */}
       <div
         style={{
@@ -3642,19 +3660,53 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                         padding: "4px 14px",
                       }}
                     >
+                      {/* ── IMAGE PREVIEW in user bubble ── */}
                       <div
                         style={{
                           background: "#2f2f2f",
                           borderRadius: "16px 16px 3px 16px",
-                          padding: "10px 14px",
+                          padding: msg.imageUrl ? "6px" : "10px 14px",
                           maxWidth: "82%",
-                          fontSize: "0.9rem",
-                          lineHeight: 1.65,
-                          color: "#ececec",
                           wordBreak: "break-word",
                         }}
                       >
-                        {msg.content}
+                        {msg.imageUrl && (
+                          <img
+                            src={msg.imageUrl}
+                            alt="uploaded"
+                            style={{
+                              maxWidth: "100%",
+                              maxHeight: 260,
+                              borderRadius: 10,
+                              display: "block",
+                              objectFit: "contain",
+                            }}
+                          />
+                        )}
+                        {msg.filePrompt && (
+                          <div
+                            style={{
+                              marginTop: msg.imageUrl ? 6 : 0,
+                              padding: "4px 8px",
+                              fontSize: "0.9rem",
+                              color: "#ececec",
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {msg.filePrompt}
+                          </div>
+                        )}
+                        {!msg.imageUrl && msg.content && (
+                          <div
+                            style={{
+                              fontSize: "0.9rem",
+                              lineHeight: 1.65,
+                              color: "#ececec",
+                            }}
+                          >
+                            {msg.content}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -3740,7 +3792,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
           )}
         </div>
 
-        {/* INPUT */}
+        {/* INPUT AREA */}
         <div
           style={{
             flexShrink: 0,
@@ -3749,6 +3801,97 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
             borderTop: isEmpty ? "none" : "1px solid #2a2a2a",
           }}
         >
+          {/* ── FILE PREVIEW + PROMPT BOX ── */}
+          {pendingFile && (
+            <div
+              style={{
+                background: "#2a2a2a",
+                border: "1px solid #10a37f40",
+                borderRadius: 12,
+                padding: "10px 12px",
+                marginBottom: 8,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 8,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 18 }}>
+                    {pendingFile.type === "application/pdf" ? "📄" : "📷"}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#aaa",
+                      maxWidth: 200,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {pendingFile.name}
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    setPendingFile(null);
+                    setFilePrompt("");
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#666",
+                    cursor: "pointer",
+                    fontSize: 18,
+                    lineHeight: 1,
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+              <textarea
+                value={filePrompt}
+                onChange={(e) => setFilePrompt(e.target.value)}
+                placeholder="Ask something about this file... (optional)"
+                rows={2}
+                style={{
+                  width: "100%",
+                  background: "#1e1e1e",
+                  border: "1px solid #3a3a3a",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  color: "#ececec",
+                  fontSize: "0.88rem",
+                  outline: "none",
+                  resize: "none",
+                  fontFamily: "'Figtree', sans-serif",
+                  marginBottom: 8,
+                }}
+              />
+              <button
+                onClick={sendFileWithPrompt}
+                style={{
+                  width: "100%",
+                  padding: "9px",
+                  background: "#10a37f",
+                  border: "none",
+                  borderRadius: 8,
+                  color: "#fff",
+                  fontSize: "0.88rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Send →
+              </button>
+            </div>
+          )}
+
           {isListening && (
             <div
               style={{
@@ -3761,6 +3904,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               🎤 Recording... release to send
             </div>
           )}
+
           <div
             style={{
               display: "flex",
@@ -3773,6 +3917,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               transition: "border-color 0.2s",
             }}
           >
+            {/* ── PAPERCLIP ICON (Change 1) ── */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -3803,11 +3948,10 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
+
             <input
               ref={fileInputRef}
               type="file"
@@ -3839,6 +3983,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 e.target.value = "";
               }}
             />
+
             <button
               onMouseDown={startListening}
               onMouseUp={stopListening}
@@ -3883,6 +4028,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 <line x1="8" y1="23" x2="16" y2="23" />
               </svg>
             </button>
+
             {isSpeaking && (
               <button
                 onClick={stopSpeaking}
@@ -3905,6 +4051,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 </svg>
               </button>
             )}
+
             <textarea
               ref={textareaRef}
               value={input}
@@ -3934,6 +4081,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 fontSize: 16,
               }}
             />
+
             <button
               onClick={sendMessage}
               disabled={loading || !input.trim()}
@@ -3994,48 +4142,210 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
 
       {/* ATTACH SHEET */}
       {showAttachMenu && (
-        <div
-          onClick={() => setShowAttachMenu(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 200,
-            background: "rgba(0,0,0,0.5)",
-          }}
-        >
+        <>
+          <style>{`
+      @keyframes attachBackdropIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+      @keyframes attachSheetIn {
+        from { transform: translateY(100%) scale(0.97); opacity: 0; }
+        to   { transform: translateY(0)    scale(1);    opacity: 1; }
+      }
+      @keyframes attachCardIn {
+        from { opacity: 0; transform: translateY(14px) scale(0.95); }
+        to   { opacity: 1; transform: translateY(0)    scale(1);    }
+      }
+      @keyframes shimmer {
+        0%   { background-position: -200% center; }
+        100% { background-position:  200% center; }
+      }
+      .attach-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 16px 14px 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.07);
+        background: rgba(255,255,255,0.04);
+        cursor: pointer;
+        transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1),
+                    background 0.18s ease,
+                    border-color 0.18s ease,
+                    box-shadow 0.22s ease;
+        -webkit-tap-highlight-color: transparent;
+        overflow: hidden;
+        backdrop-filter: blur(12px);
+      }
+      .attach-card:active {
+        transform: scale(0.93) !important;
+      }
+      .attach-card::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 60%);
+        pointer-events: none;
+      }
+      .attach-card:hover {
+        background: rgba(255,255,255,0.08);
+        border-color: rgba(255,255,255,0.14);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+        transform: translateY(-2px);
+      }
+      .attach-icon-wrap {
+        width: 42px;
+        height: 42px;
+        border-radius: 13px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        position: relative;
+      }
+      .attach-icon-wrap::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        opacity: 0.35;
+        filter: blur(8px);
+        transform: translateY(4px) scale(0.85);
+      }
+    `}</style>
+
+          {/* Backdrop */}
+          <div
+            onClick={() => setShowAttachMenu(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 200,
+              background: "rgba(0,0,0,0.6)",
+              backdropFilter: "blur(6px)",
+              WebkitBackdropFilter: "blur(6px)",
+              animation: "attachBackdropIn 0.25s ease both",
+            }}
+          />
+
+          {/* Sheet */}
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              position: "absolute",
+              position: "fixed",
               bottom: 0,
               left: 0,
               right: 0,
-              background: "#2a2a2a",
-              borderRadius: "18px 18px 0 0",
-              padding: "12px 0 calc(20px + env(safe-area-inset-bottom))",
-              animation: "slideUp 0.2s ease",
+              zIndex: 201,
+              background: "linear-gradient(180deg, #1c1c1e 0%, #141416 100%)",
+              borderRadius: "26px 26px 0 0",
+              padding: "0 0 calc(28px + env(safe-area-inset-bottom))",
+              animation: "attachSheetIn 0.35s cubic-bezier(0.32,0.72,0,1) both",
+              boxShadow:
+                "0 -1px 0 rgba(255,255,255,0.07), 0 -24px 60px rgba(0,0,0,0.7)",
             }}
           >
+            {/* Top handle + header */}
+            <div style={{ padding: "12px 20px 18px" }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 4,
+                  borderRadius: 2,
+                  background: "rgba(255,255,255,0.15)",
+                  margin: "0 auto 20px",
+                }}
+              />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      fontSize: "1.05rem",
+                      fontWeight: 700,
+                      color: "#fff",
+                      letterSpacing: -0.3,
+                    }}
+                  >
+                    Add Attachment
+                  </div>
+                  <div
+                    style={{ fontSize: "0.72rem", color: "#555", marginTop: 2 }}
+                  >
+                    Photo, gallery image, or PDF document
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAttachMenu(false)}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: "50%",
+                    background: "rgba(255,255,255,0.08)",
+                    border: "none",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#888",
+                  }}
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  >
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* 3-card grid */}
             <div
               style={{
-                width: 36,
-                height: 4,
-                background: "#444",
-                borderRadius: 2,
-                margin: "0 auto 16px",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr 1fr",
+                gap: 10,
+                padding: "0 14px",
               }}
-            />
-            {[
-              {
-                label: "Take a Photo",
-                ref: cameraInputRef,
-                icon: (
+            >
+              {/* Take a Photo */}
+              <button
+                className="attach-card"
+                onClick={() => {
+                  cameraInputRef.current.click();
+                  setShowAttachMenu(false);
+                }}
+                style={{
+                  animation:
+                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.05s both",
+                }}
+              >
+                <div
+                  className="attach-icon-wrap"
+                  style={{
+                    background: "linear-gradient(135deg, #ff6b35, #ff3a6e)",
+                  }}
+                >
                   <svg
                     width="20"
                     height="20"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#ececec"
+                    stroke="#fff"
                     strokeWidth="1.8"
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -4043,38 +4353,112 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                     <circle cx="12" cy="13" r="4" />
                   </svg>
-                ),
-              },
-              {
-                label: "Choose from Gallery",
-                ref: fileInputRef,
-                icon: (
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      color: "#fff",
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    Camera
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "#555",
+                      marginTop: 3,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    Take a photo
+                  </div>
+                </div>
+              </button>
+
+              {/* Gallery */}
+              <button
+                className="attach-card"
+                onClick={() => {
+                  fileInputRef.current.click();
+                  setShowAttachMenu(false);
+                }}
+                style={{
+                  animation:
+                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.11s both",
+                }}
+              >
+                <div
+                  className="attach-icon-wrap"
+                  style={{
+                    background: "linear-gradient(135deg, #7c3aed, #4f46e5)",
+                  }}
+                >
                   <svg
                     width="20"
                     height="20"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#ececec"
+                    stroke="#fff"
                     strokeWidth="1.8"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <rect x="3" y="3" width="18" height="18" rx="3" />
                     <circle cx="8.5" cy="8.5" r="1.5" />
                     <polyline points="21 15 16 10 5 21" />
                   </svg>
-                ),
-              },
-              {
-                label: "Upload PDF",
-                ref: pdfInputRef,
-                icon: (
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      color: "#fff",
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    Gallery
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "#555",
+                      marginTop: 3,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    Pick image
+                  </div>
+                </div>
+              </button>
+
+              {/* PDF */}
+              <button
+                className="attach-card"
+                onClick={() => {
+                  pdfInputRef.current.click();
+                  setShowAttachMenu(false);
+                }}
+                style={{
+                  animation:
+                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.17s both",
+                }}
+              >
+                <div
+                  className="attach-icon-wrap"
+                  style={{
+                    background: "linear-gradient(135deg, #059669, #10b981)",
+                  }}
+                >
                   <svg
                     width="20"
                     height="20"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#ececec"
+                    stroke="#fff"
                     strokeWidth="1.8"
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -4084,50 +4468,82 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                     <line x1="16" y1="13" x2="8" y2="13" />
                     <line x1="16" y1="17" x2="8" y2="17" />
                   </svg>
-                ),
-              },
-            ].map(({ label, ref, icon }) => (
-              <button
-                key={label}
-                onClick={() => {
-                  ref.current.click();
-                  setShowAttachMenu(false);
-                }}
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      color: "#fff",
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    PDF
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "0.65rem",
+                      color: "#555",
+                      marginTop: 3,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    Upload doc
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {/* Subtle tip row */}
+            <div
+              style={{
+                margin: "16px 14px 0",
+                padding: "10px 14px",
+                borderRadius: 12,
+                background: "rgba(16,163,127,0.07)",
+                border: "1px solid rgba(16,163,127,0.14)",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <div
                 style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 8,
+                  flexShrink: 0,
+                  background: "rgba(16,163,127,0.15)",
                   display: "flex",
                   alignItems: "center",
-                  gap: 16,
-                  width: "100%",
-                  padding: "14px 24px",
-                  background: "transparent",
-                  border: "none",
-                  color: "#ececec",
-                  fontSize: "0.95rem",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontFamily: "'Figtree', sans-serif",
+                  justifyContent: "center",
                 }}
               >
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 10,
-                    background: "#3a3a3a",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#10a37f"
+                  strokeWidth="2"
+                  strokeLinecap="round"
                 >
-                  {icon}
-                </div>
-                {label}
-              </button>
-            ))}
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <div
+                style={{ fontSize: "0.7rem", color: "#555", lineHeight: 1.5 }}
+              >
+                After selecting, you can{" "}
+                <span style={{ color: "#10a37f" }}>add a question</span> before
+                sending
+              </div>
+            </div>
           </div>
-        </div>
+        </>
       )}
-
       {toast && (
         <div
           style={{

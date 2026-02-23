@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+// Polyfill browser APIs that pdfjs-dist needs in Node.js
+
 import express from "express";
 import cors from "cors";
 import multer from "multer";
@@ -8,6 +10,10 @@ import { extractText } from "unpdf";
 import { askAI, askAIWithImage } from "./aiService.js";
 import Groq from "groq-sdk";
 import { MongoClient, ObjectId } from "mongodb";
+import { Storage } from "@google-cloud/storage";
+
+const storage = new Storage();
+const bucketName = "examai"; // your bucket name
 
 const app = express();
 app.use(cors());
@@ -45,6 +51,111 @@ const getChats = () => db.collection("chats");
 const getQuizResults = () => db.collection("quiz_results");
 const getPlanners = () => db.collection("study_planners");
 
+// ── GOOGLE CLOUD VISION OCR ───────────────────────
+// Free tier: 1,000 pages/month — no cost up to that limit.
+//
+// SETUP (one-time):
+//   1. npm install @google-cloud/vision
+//   2. GCP Console → Enable "Cloud Vision API"
+//   3. IAM → Create Service Account → Download JSON key
+//   4. Add to .env:  GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/key.json
+//
+// HOW IT'S USED HERE:
+//   Scanned PDF path:  pdfjs renders page 1 → PNG buffer
+//     → [1st try] Google Vision textDetection  (free, very accurate)
+//     → [2nd try] Llama 4 Scout vision          (fallback if Vision fails/unavailable)
+//     → [3rd try] User-friendly error message
+
+// ── GOOGLE VISION OCR (IMAGES + PDFs) ─────────────────────────────
+let visionClient = null;
+
+try {
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    const vision = await import("@google-cloud/vision");
+    visionClient = new vision.default.ImageAnnotatorClient();
+    console.log("✅ Google Vision OCR ready (1,000 pages/month free)");
+  } else {
+    console.warn("⚠️ GOOGLE_APPLICATION_CREDENTIALS not set");
+  }
+} catch (err) {
+  console.warn("⚠️ @google-cloud/vision not installed");
+}
+
+const ocrWithGoogleVision = async (buffer) => {
+  if (!visionClient) return null;
+
+  try {
+    const [result] = await visionClient.documentTextDetection({
+      image: { content: buffer.toString("base64") },
+    });
+
+    const text = result.fullTextAnnotation?.text?.trim() || "";
+
+    if (text) {
+      console.log(`✅ Vision extracted ${text.length} characters`);
+      return text;
+    }
+
+    return null;
+  } catch (err) {
+    console.error("❌ Vision OCR error:", err.message);
+    return null;
+  }
+};
+const ocrPdfWithVision = async (pdfBuffer) => {
+  const bucket = storage.bucket(bucketName);
+
+  const fileName = `uploads/${Date.now()}.pdf`;
+  const file = bucket.file(fileName);
+
+  // Upload PDF
+  await file.save(pdfBuffer, {
+    contentType: "application/pdf",
+  });
+
+  const gcsSourceUri = `gs://${bucketName}/${fileName}`;
+  const gcsDestinationUri = `gs://${bucketName}/output/${Date.now()}/`;
+
+  const request = {
+    requests: [
+      {
+        inputConfig: {
+          gcsSource: { uri: gcsSourceUri },
+          mimeType: "application/pdf",
+        },
+        features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+        outputConfig: {
+          gcsDestination: { uri: gcsDestinationUri },
+        },
+      },
+    ],
+  };
+
+  const [operation] = await visionClient.asyncBatchAnnotateFiles(request);
+  await operation.promise();
+
+  // Read results
+  const [files] = await bucket.getFiles({
+    prefix: gcsDestinationUri.replace(`gs://${bucketName}/`, ""),
+  });
+
+  let fullText = "";
+
+  for (const outputFile of files) {
+    const [contents] = await outputFile.download();
+    const json = JSON.parse(contents.toString());
+
+    const responses = json.responses || [];
+
+    responses.forEach((res) => {
+      if (res.fullTextAnnotation?.text) {
+        fullText += res.fullTextAnnotation.text + "\n";
+      }
+    });
+  }
+
+  return fullText.trim();
+};
 // ── NEWSAPI: Fetch latest current affairs context ─
 const fetchNewsContext = async (topic) => {
   if (!process.env.NEWS_API_KEY) return "";
@@ -753,9 +864,9 @@ app.post("/chat", async (req, res) => {
 // This way daily TPD is spread across models instead of burning one.
 
 const GROQ_MODELS = [
-  { id: "llama-3.1-8b-instant", maxTokens: 2048 },
-  { id: "llama-3.2-11b-text-preview", maxTokens: 3000 },
-  { id: "llama-3.3-70b-versatile", maxTokens: 4096 },
+  { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 3000 }, // 30K TPM, try first
+  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", maxTokens: 3000 }, // fallback
+  { id: "llama-3.3-70b-versatile", maxTokens: 4096 }, // last resort (Llama 3 backup)
 ];
 
 // Extra tokens needed when the prompt contains live news context
@@ -860,9 +971,6 @@ app.post("/quiz/generate", async (req, res) => {
   const safeCount = Math.min(Number(count) || 10, 10);
 
   // For State PCS: prepend the selected state to the topic
-  // so the prompt knows exactly which state to focus on
-  // e.g. topic = "History", state = "Uttar Pradesh (UPPSC)"
-  // → finalTopic = "Uttar Pradesh (UPPSC) — History"
   const finalTopic =
     exam === "State PCS" && state ? `${state} — ${topic}` : topic;
 
@@ -883,11 +991,44 @@ app.post("/quiz/generate", async (req, res) => {
   const prompt = getQuizPrompt(exam, finalTopic, safeCount, contextBlock);
 
   try {
-    const content = await callGroqWithFallback(prompt, !!contextBlock);
-    const jsonStr = content.replace(/```json|```/g, "").trim();
-    const questions = JSON.parse(jsonStr);
-    if (!Array.isArray(questions)) throw new Error("Invalid format");
+    let content = await callGroqWithFallback(prompt, !!contextBlock);
 
+    // Step 1: Strip markdown
+    content = content
+      .replace(/```json\s*/gi, "")
+      .replace(/```\s*/g, "")
+      .trim();
+
+    // Step 2: FIX CONTROL CHARACTERS BEFORE ANYTHING ELSE
+    content = content.replace(/"((?:[^"\\]|\\.)*)"/g, (match, inner) => {
+      const fixed = inner
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "\\r")
+        .replace(/\t/g, "\\t")
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+      return `"${fixed}"`;
+    });
+
+    // Step 3: Extract JSON array
+    const arrayMatch = content.match(/\[[\s\S]*\]/);
+    if (!arrayMatch) throw new Error("No JSON array found in response");
+
+    // Step 4: Parse
+    let questions;
+    try {
+      questions = JSON.parse(arrayMatch[0]);
+    } catch (e) {
+      // Last resort: aggressive strip of ALL control chars
+      const cleaned = arrayMatch[0].replace(/[\u0000-\u001F\u007F]/g, (c) => {
+        if (c === "\n") return "\\n";
+        if (c === "\t") return "\\t";
+        if (c === "\r") return "\\r";
+        return "";
+      });
+      questions = JSON.parse(cleaned);
+    }
+
+    if (!Array.isArray(questions)) throw new Error("Invalid format");
     res.json({
       questions,
       contextUsed: exam === "Current Affairs" && !!contextBlock,
@@ -895,7 +1036,6 @@ app.post("/quiz/generate", async (req, res) => {
   } catch (err) {
     console.error("Quiz error:", err.message);
 
-    // Return a user-friendly message for rate limit errors
     const isRateLimit =
       err.message.toLowerCase().includes("rate limit") ||
       err.message.toLowerCase().includes("rate limited") ||
@@ -1002,7 +1142,7 @@ Rules:
           Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.4,
           max_tokens: 8000,
@@ -1110,42 +1250,78 @@ app.delete("/planner/:userId/:plannerId", async (req, res) => {
   }
 });
 
-// ── IMAGE ─────────────────────────────────────────
+// ── IMAGE ROUTE ───────────────────────────────────
+// ── IMAGE & PDF ROUTE ─────────────────────────────────────────────
 app.post("/image", upload.single("image"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "File required" });
+    if (!req.file) {
+      return res.status(400).json({ error: "File required" });
+    }
+
     const allowedTypes = [
       "image/jpeg",
       "image/png",
       "image/webp",
       "application/pdf",
     ];
-    if (!allowedTypes.includes(req.file.mimetype))
-      return res.status(400).json({ error: "Only JPEG/PNG/WEBP/PDF allowed" });
-    if (req.file.mimetype === "application/pdf") {
-      try {
-        const buffer = new Uint8Array(req.file.buffer);
-        const { text } = await extractText(buffer, { mergePages: true });
-        if (text?.trim()) {
-          const answer = await askAI(text.slice(0, 3000), req.body.exam);
-          return res.json({ answer });
-        }
-      } catch (e) {
-        console.log("PDF extraction failed:", e.message);
-      }
-      return res.json({
-        answer:
-          "⚠️ This appears to be a scanned PDF. Please use **Take a Photo** option instead.",
+
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      return res.status(400).json({
+        error: "Only JPEG, PNG, WEBP, or PDF allowed",
       });
     }
-    const answer = await askAIWithImage(
-      req.file.buffer,
-      req.file.mimetype,
-      req.body.exam
-    );
-    res.json({ answer });
+
+    let extractedText = null;
+
+    // ───────── PDF HANDLING ─────────
+    if (req.file.mimetype === "application/pdf") {
+      console.log("📄 PDF uploaded");
+
+      // STEP 1 — Try digital extraction (fast + free)
+      try {
+        const uint8 = new Uint8Array(req.file.buffer);
+        const { text } = await extractText(uint8, { mergePages: true });
+
+        if (text?.trim()) {
+          console.log("✅ Digital PDF — extracted via unpdf");
+          extractedText = text;
+        }
+      } catch (err) {
+        console.log("⚠️ unpdf failed:", err.message);
+      }
+
+      // STEP 2 — If scanned PDF → use async Vision
+      if (!extractedText) {
+        console.log("🔍 Scanned PDF — using Vision async OCR...");
+        extractedText = await ocrPdfWithVision(req.file.buffer);
+      }
+    }
+
+    // ───────── IMAGE HANDLING ─────────
+    else {
+      console.log("🖼 Image uploaded — using Vision OCR...");
+      extractedText = await ocrWithGoogleVision(req.file.buffer);
+    }
+
+    if (!extractedText) {
+      return res.json({
+        answer:
+          "📸 Could not extract readable text. Please upload a clearer image or PDF.",
+      });
+    }
+
+    console.log(`✅ Final extracted text length: ${extractedText.length}`);
+
+    const trimmedText = extractedText.slice(0, 5000);
+
+    const answer = await askAI(trimmedText, req.body.exam);
+
+    res.json({
+      answer,
+      source: "google-vision",
+    });
   } catch (err) {
-    console.error("File error:", err.message);
+    console.error("File processing error:", err.message);
     res.status(500).json({ error: "File processing failed" });
   }
 });
