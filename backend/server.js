@@ -518,7 +518,7 @@ const callGroqWithFallback = async (prompt, hasContext = false) => {
             model: model.id,
             messages: [{ role: "user", content: prompt }],
             temperature: 0.4,
-            max_tokens: maxTokens,
+            max_completion_tokens: 1024,
           }),
         }
       );
