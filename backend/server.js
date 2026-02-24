@@ -473,7 +473,7 @@ const callGPT52 = async (prompt, hasContext = false) => {
         model: "gpt-5.2",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.3,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens, // ✅ FIXED
       }),
     });
 
