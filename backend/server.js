@@ -23,11 +23,6 @@ if (!process.env.MONGODB_URI) {
   console.error("❌ MONGODB_URI missing!");
   process.exit(1);
 }
-if (!process.env.NEWS_API_KEY) {
-  console.warn(
-    "⚠️  NEWS_API_KEY missing — Current Affairs quiz will use model knowledge only."
-  );
-}
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
@@ -91,66 +86,50 @@ const ocrWithGoogleVision = async (fileBuffer) => {
   }
 };
 
-// ── NEWSAPI ───────────────────────────────────────────────────────────────────
-const fetchNewsContext = async (topic) => {
-  if (!process.env.NEWS_API_KEY) return "";
+// ── LIVE SEARCH CACHE (1 hour) ─────────────────────────────
+const searchCache = new Map();
+const SEARCH_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+
+const fetchLiveSearchContext = async (query) => {
+  if (!process.env.SERPER_API_KEY) return "";
+
+  const cached = searchCache.get(query);
+  const now = Date.now();
+
+  if (cached && now - cached.timestamp < SEARCH_CACHE_DURATION) {
+    return cached.data;
+  }
+
   try {
-    const [topicRes, indiaRes] = await Promise.all([
-      fetch(
-        `https://newsapi.org/v2/everything?` +
-          new URLSearchParams({
-            q: `${topic} India`,
-            sortBy: "publishedAt",
-            pageSize: 8,
-            language: "en",
-            apiKey: process.env.NEWS_API_KEY,
-          })
-      ),
-      fetch(
-        `https://newsapi.org/v2/everything?` +
-          new URLSearchParams({
-            q: `${topic} government policy scheme`,
-            sortBy: "relevancy",
-            pageSize: 5,
-            language: "en",
-            apiKey: process.env.NEWS_API_KEY,
-          })
-      ),
-    ]);
-
-    const [topicData, indiaData] = await Promise.all([
-      topicRes.json(),
-      indiaRes.json(),
-    ]);
-
-    const seen = new Set();
-    const allArticles = [
-      ...(topicData.articles || []),
-      ...(indiaData.articles || []),
-    ].filter((a) => {
-      if (!a.title || a.title === "[Removed]") return false;
-      if (seen.has(a.title)) return false;
-      seen.add(a.title);
-      return true;
+    const response = await fetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: {
+        "X-API-KEY": process.env.SERPER_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ q: query, num: 5 }),
     });
 
-    if (!allArticles.length) return "";
+    const data = await response.json();
 
-    const lines = allArticles
-      .slice(0, 10)
-      .map((a, i) => {
-        const date = a.publishedAt ? `[${a.publishedAt.slice(0, 10)}] ` : "";
-        const desc = (a.description || a.content || "")
-          .slice(0, 200)
-          .replace(/\n/g, " ")
-          .trim();
-        return `${i + 1}. ${date}${a.title}${desc ? " — " + desc : ""}`;
-      })
-      .join("\n");
+    if (!data.organic?.length) return "";
 
-    return `RECENT NEWS ITEMS (fetched live from the internet):\n${lines}`;
+    const results = data.organic.slice(0, 5).map((r, i) => {
+      return `${i + 1}. ${r.title}
+${r.snippet}
+Source: ${r.link}`;
+    });
+
+    const formatted = `LIVE SEARCH RESULTS:\n\n${results.join("\n\n")}`;
+
+    searchCache.set(query, {
+      data: formatted,
+      timestamp: now,
+    });
+
+    return formatted;
   } catch (err) {
-    console.warn("NewsAPI error:", err.message);
+    console.error("Serper error:", err.message);
     return "";
   }
 };
@@ -360,24 +339,6 @@ app.get("/chats/:userId/:chatId", async (req, res) => {
   }
 });
 
-app.post("/chats/:userId", async (req, res) => {
-  try {
-    const { exam = "General" } = req.body;
-    const newChat = {
-      userId: req.params.userId,
-      title: "New Chat",
-      exam,
-      messages: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    const result = await getChats().insertOne(newChat);
-    res.json({ chatId: result.insertedId, ...newChat });
-  } catch (err) {
-    res.status(500).json({ error: "Failed to create chat" });
-  }
-});
-
 app.delete("/chats/:userId/:chatId", async (req, res) => {
   try {
     await getChats().deleteOne({
@@ -390,28 +351,111 @@ app.delete("/chats/:userId/:chatId", async (req, res) => {
   }
 });
 
+app.post("/chats/:userId", async (req, res) => {
+  try {
+    const { exam = "General" } = req.body;
+
+    const newChat = {
+      userId: req.params.userId,
+      title: "New Chat",
+      exam,
+      messages: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await getChats().insertOne(newChat);
+
+    res.json({
+      chatId: result.insertedId,
+      ...newChat,
+    });
+  } catch (err) {
+    console.error("Create chat error:", err.message);
+    res.status(500).json({ error: "Failed to create chat" });
+  }
+});
+
 // ── CHAT ──────────────────────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
   const { question, exam, history = [], userId, chatId } = req.body;
+
   if (!question) return res.status(400).json({ error: "Question is required" });
+
   try {
-    const answer = await askAI(question, exam, history);
+    let finalPrompt = question;
+
+    // 🔎 Detect dynamic factual queries
+    const isDynamicQuery =
+      /who is|current|latest|today|president|prime minister|chief justice|governor|cm|notification|vacancy|result|scheme|policy|judgment|released|announced/i.test(
+        question.toLowerCase()
+      );
+
+    if (isDynamicQuery) {
+      let searchQuery = question;
+
+      // 🔎 Detect role-based questions
+      const isRoleQuery =
+        /who is.*(president|prime minister|chief justice|governor|cm|minister)/i.test(
+          question
+        );
+
+      // 🔎 Detect exam-related official queries
+      const isExamQuery =
+        /notification|vacancy|result|cutoff|syllabus|scheme|policy|judgment|bill|act/i.test(
+          question
+        );
+
+      if (isRoleQuery) {
+        searchQuery = `current ${question} 2026 site:wikipedia.org OR site:gov`;
+      }
+
+      if (isExamQuery) {
+        searchQuery = `${question} official notification site:gov.in OR site:upsc.gov.in OR site:psc OR site:gov`;
+      }
+
+      const searchContext = await fetchLiveSearchContext(searchQuery);
+
+      if (searchContext) {
+        finalPrompt = `
+${searchContext}
+
+You are an AI assistant for competitive exams (UPSC, PCS, SSC, Banking, JEE, NEET).
+Use the live search results above as PRIMARY source.
+Prefer official government sources and authoritative references.
+Answer in concise, exam-relevant format.
+
+Question: ${question}
+`;
+      }
+    }
+
+    const answer = await askAI(finalPrompt, exam, history);
+
+    // ── SAVE CHAT ─────────────────────────────
     if (userId && chatId) {
       const userMessage = {
         role: "user",
         content: question,
         timestamp: new Date(),
       };
+
       const aiMessage = {
         role: "assistant",
         content: answer,
         timestamp: new Date(),
       };
-      const chat = await getChats().findOne({ _id: new ObjectId(chatId) });
+
+      const chat = await getChats().findOne({
+        _id: new ObjectId(chatId),
+        userId,
+      });
+
       const isFirstMessage = !chat?.messages?.length;
       const title = isFirstMessage
         ? question.slice(0, 50) + (question.length > 50 ? "..." : "")
         : chat.title;
+
       await getChats().updateOne(
         { _id: new ObjectId(chatId), userId },
         {
@@ -420,10 +464,13 @@ app.post("/chat", async (req, res) => {
         }
       );
     }
+
     res.json({ answer });
   } catch (err) {
-    console.error("AI error:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("Chat error:", err.message);
+    res.status(500).json({
+      error: "AI service temporarily unstable. Please try again.",
+    });
   }
 });
 
@@ -460,7 +507,7 @@ const checkUserRateLimit = (userId) => {
 const callGPT52 = async (prompt, hasContext = false) => {
   if (!process.env.OPENAI_API_KEY) return null;
 
-  const maxTokens = 3000 + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
+  const maxTokens = 4000 + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -472,21 +519,12 @@ const callGPT52 = async (prompt, hasContext = false) => {
       body: JSON.stringify({
         model: "gpt-5.2",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.3,
-        max_completion_tokens: maxTokens, // ✅ FIXED
+        temperature: 0.2,
+        max_completion_tokens: maxTokens,
       }),
     });
 
-    if (response.status === 429) {
-      console.warn("⚠️ GPT-5.2 rate limited — falling back to Groq...");
-      return null;
-    }
-
-    if (!response.ok) {
-      const e = await response.json().catch(() => ({}));
-      console.warn("⚠️ GPT-5.2 error:", e.error?.message);
-      return null;
-    }
+    if (!response.ok) return null;
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content?.trim();
@@ -494,17 +532,15 @@ const callGPT52 = async (prompt, hasContext = false) => {
 
     console.log("✅ Quiz generated using model: gpt-5.2");
     return content;
-  } catch (err) {
-    console.warn("⚠️ GPT-5.2 failed:", err.message);
+  } catch {
     return null;
   }
 };
-
 // Groq fallback chain — free models
 const callGroqWithFallback = async (prompt, hasContext = false) => {
-  let lastError = null;
   for (const model of GROQ_MODELS) {
     const maxTokens = model.maxTokens + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
+
     try {
       const response = await fetch(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -517,34 +553,26 @@ const callGroqWithFallback = async (prompt, hasContext = false) => {
           body: JSON.stringify({
             model: model.id,
             messages: [{ role: "user", content: prompt }],
-            temperature: 0.4,
-            max_completion_tokens: 1024,
+            temperature: 0.2,
+            max_completion_tokens: maxTokens, // ✅ FIXED
           }),
         }
       );
-      if (response.status === 429) {
-        const e = await response.json().catch(() => ({}));
-        console.warn(`⚠️  ${model.id} rate limited — trying next model...`);
-        lastError = e.error?.message;
-        continue;
-      }
-      if (!response.ok) {
-        const e = await response.json().catch(() => ({}));
-        throw new Error(e.error?.message || `Groq error: ${response.status}`);
-      }
+
+      if (!response.ok) continue;
+
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) throw new Error("Empty response from AI");
+      if (!content) continue;
+
       console.log(`✅ Quiz generated using model: ${model.id}`);
       return content;
-    } catch (err) {
-      if (!err.message?.includes("Rate limit")) throw err;
-      lastError = err.message;
+    } catch {
+      continue;
     }
   }
-  throw new Error(
-    `All models are currently rate limited. Please wait a few minutes. (${lastError})`
-  );
+
+  throw new Error("All fallback models failed");
 };
 
 // Main entry — GPT-4o first, Groq fallback
@@ -553,23 +581,33 @@ const generateQuizContent = async (prompt, hasContext = false) => {
   if (gptResult) return gptResult;
   return callGroqWithFallback(prompt, hasContext);
 };
+// ── SAFE JSON ARRAY EXTRACTOR ───────────────────────────────
+const extractJSONArray = (text) => {
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
 
+  if (start === -1 || end === -1) {
+    throw new Error("JSON boundaries not found");
+  }
+
+  const jsonString = text.slice(start, end + 1);
+
+  if (!jsonString.trim().endsWith("]")) {
+    throw new Error("Truncated JSON detected");
+  }
+
+  return JSON.parse(jsonString);
+};
 // ── QUIZ ──────────────────────────────────────────────────────────────────────
 app.post("/quiz/generate", async (req, res) => {
   const { topic, exam = "General", count = 10, userId, state } = req.body;
-  if (!topic) return res.status(400).json({ error: "Topic is required" });
-
-  if (exam === "State PCS" && !state) {
-    return res
-      .status(400)
-      .json({ error: "Please select a state for State PCS quiz." });
-  }
-
   if (!checkUserRateLimit(userId)) {
     return res.status(429).json({
-      error: `You've generated ${USER_HOURLY_LIMIT} quizzes this hour. Please wait.`,
+      error: "Hourly quiz limit reached. Please try again later.",
     });
   }
+
+  if (!topic) return res.status(400).json({ error: "Topic is required" });
 
   const safeCount = Math.min(Number(count) || 10, 10);
   const finalTopic =
@@ -577,64 +615,57 @@ app.post("/quiz/generate", async (req, res) => {
 
   let contextBlock = "";
   if (exam === "Current Affairs") {
-    console.log(`📰 Fetching NewsAPI context for: "${finalTopic}"`);
-    contextBlock = await fetchNewsContext(finalTopic);
-    console.log(
-      contextBlock
-        ? "✅ NewsAPI context fetched"
-        : "⚠️  No NewsAPI context — using model knowledge"
+    contextBlock = await fetchLiveSearchContext(
+      `${finalTopic} India government PIB official`
     );
   }
 
   const prompt = getQuizPrompt(exam, finalTopic, safeCount, contextBlock);
 
   try {
-    let content = await generateQuizContent(prompt, !!contextBlock);
+    let content = await callGPT52(prompt, !!contextBlock);
 
-    content = content
-      .replace(/```json\s*/gi, "")
-      .replace(/```\s*/g, "")
-      .trim();
-    content = content.replace(/"((?:[^"\\]|\\.)*)"/g, (match, inner) => {
-      const fixed = inner
-        .replace(/\n/g, "\\n")
-        .replace(/\r/g, "\\r")
-        .replace(/\t/g, "\\t")
-        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
-      return `"${fixed}"`;
-    });
-
-    const arrayMatch = content.match(/\[[\s\S]*\]/);
-    if (!arrayMatch) throw new Error("No JSON array found in response");
-
-    let questions;
-    try {
-      questions = JSON.parse(arrayMatch[0]);
-    } catch (e) {
-      const cleaned = arrayMatch[0].replace(/[\u0000-\u001F\u007F]/g, (c) => {
-        if (c === "\n") return "\\n";
-        if (c === "\t") return "\\t";
-        if (c === "\r") return "\\r";
-        return "";
-      });
-      questions = JSON.parse(cleaned);
+    if (!content) {
+      throw new Error("GPT-5.2 failed to generate quiz");
     }
 
-    if (!Array.isArray(questions)) throw new Error("Invalid format");
+    // Remove markdown if present
+    content = content
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+
+    let questions;
+
+    try {
+      questions = extractJSONArray(content);
+    } catch (err) {
+      console.warn("⚠️ First parse failed. Retrying once...");
+
+      // Retry once if truncated
+      content = await callGPT52(prompt, !!contextBlock);
+
+      if (!content) throw new Error("Retry failed");
+
+      content = content
+        .replace(/```json/gi, "")
+        .replace(/```/g, "")
+        .trim();
+
+      questions = extractJSONArray(content);
+    }
+
+    if (!Array.isArray(questions)) throw new Error("Invalid quiz format");
+
     res.json({
       questions,
       contextUsed: exam === "Current Affairs" && !!contextBlock,
     });
   } catch (err) {
     console.error("Quiz error:", err.message);
-    const isRateLimit =
-      err.message.toLowerCase().includes("rate limit") ||
-      err.message.toLowerCase().includes("tpd") ||
-      err.message.toLowerCase().includes("429");
-    res.status(isRateLimit ? 429 : 500).json({
-      error: isRateLimit
-        ? "The AI service is temporarily busy. Please wait a few minutes and try again."
-        : "Failed to generate quiz. Please try again.",
+    res.status(500).json({
+      error:
+        "AI service temporarily unstable. Please try again in a few seconds.",
     });
   }
 });
