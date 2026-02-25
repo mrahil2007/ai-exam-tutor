@@ -172,14 +172,16 @@ NEVER use "All of the above" or "None of the above" as options.
   const examInstructions = {
     UPSC: `You are a UPSC Civil Services Preliminary Examination question setter for GS Paper I.
 Generate questions STRICTLY based on UPSC Prelims GS Paper I PYQs (2014–2023) and NCERT textbooks Class 6–12.
-ABSOLUTE RESTRICTIONS: DO NOT invent Articles, Acts, committees, or schemes.
+ABSOLUTE RESTRICTIONS: DO NOT invent Articles, Acts, committees, schemes, or facts not in NCERT or PYQs.
+Every single question must be 100% traceable to either a UPSC PYQ (2014–2023) or an NCERT Class 6–12 textbook.
 Topic: "${topic}"
 ${upscGS1Formats}`,
 
     CSAT: `You are a UPSC CSAT (Paper II) question setter. Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2023).
 TOPIC: "${topic}"
 Cover: READING COMPREHENSION, LOGICAL REASONING, DECISION MAKING, BASIC NUMERACY, DATA INTERPRETATION, GENERAL MENTAL ABILITY.
-RULES: Every numerical answer uniquely correct. DIFFICULTY: 50% Moderate, 50% Hard. Show full working in explanation.`,
+RULES: Every numerical answer uniquely correct. DIFFICULTY: 50% Moderate, 50% Hard. Show full working in explanation.
+STRICT: Only include question types that appear in official UPSC CSAT PYQs. Do not go beyond CSAT scope.`,
 
     "Current Affairs": `You are a UPSC Current Affairs question setter. Use the LIVE CONTEXT below as PRIMARY source.
 Topic: "${topic}"
@@ -190,49 +192,69 @@ ${
   "⚠️ No live context available — use your best known recent facts on this topic for UPSC."
 }
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STRICT: Only generate questions based on verified facts from the live context above or well-established current affairs. Do NOT invent events, data, or facts.
 ${upscGS1Formats}`,
 
-    JEE: `You are a JEE Main/Advanced question setter. Generate challenging questions on "${topic}".
+    JEE: `You are a JEE Main/Advanced question setter.
+Generate questions on "${topic}" STRICTLY from the official JEE Main/Advanced syllabus as defined by NTA.
+ONLY cover topics explicitly listed in the official JEE syllabus. DO NOT include BSc-level or engineering college topics.
 Use a MIX of: Numerical-based MCQ, Concept application, Common misconception traps, Graph/diagram interpretation.
-RULES: Include actual numerical values. Options differ by small margins. 60% hard, 40% medium. Show key formula in explanation.`,
+RULES: Include actual numerical values. Options differ by small margins. 60% hard, 40% medium. Show key formula in explanation.
+ABSOLUTE RESTRICTION: Every question must be solvable using JEE syllabus knowledge only. No topic outside NTA JEE syllabus.`,
 
-    NEET: `You are a NEET UG question setter. Generate questions on "${topic}" strictly from NCERT syllabus.
+    NEET: `You are a NEET UG question setter.
+Generate questions on "${topic}" STRICTLY from NCERT Class 11 and Class 12 Biology, Physics, and Chemistry textbooks only.
+DO NOT include any topic, concept, or terminology beyond what appears in NCERT Class 11–12 textbooks.
 Use a MIX of: Assertion-Reason, Diagram/structure based, Statement true/false, Application-based.
-RULES: Every answer traceable to NCERT. Correct scientific nomenclature. 50% hard, 50% medium.`,
+RULES: Every answer must be directly traceable to a specific NCERT Class 11 or 12 chapter. Correct scientific nomenclature. 50% hard, 50% medium.
+ABSOLUTE RESTRICTION: If a concept is not in NCERT Class 11–12, do NOT include it.`,
 
     CAT: `You are a CAT question setter. Generate CAT-level questions on "${topic}".
+STRICTLY follow the official CAT syllabus as conducted by IIMs.
 Use a MIX of: VARC (Para-jumble, Para-summary, Inference), DILR, QA (Word problems).
-RULES: Options very close. Avoid straightforward computation. Show elimination strategy. 60% hard, 40% medium.`,
+RULES: Options very close. Avoid straightforward computation. Show elimination strategy. 60% hard, 40% medium.
+ABSOLUTE RESTRICTION: Only include question types that appear in official CAT papers. Do not go beyond CAT scope.`,
 
-    SSC: `You are an SSC CGL/CHSL question setter. Generate questions on "${topic}".
+    SSC: `You are an SSC CGL/CHSL question setter.
+Generate questions on "${topic}" STRICTLY within the official SSC CGL/CHSL syllabus as defined by SSC.
 Mix: Reasoning, Quant, GK, English.
-RULES: Options tricky. For Quant show shortcut. 40% hard, 60% medium.`,
+RULES: Options tricky. For Quant show shortcut. 40% hard, 60% medium.
+ABSOLUTE RESTRICTION: Do not include topics outside the official SSC CGL/CHSL syllabus.`,
 
-    Banking: `You are an IBPS/SBI PO question setter. Generate questions on "${topic}".
+    Banking: `You are an IBPS/SBI PO question setter.
+Generate questions on "${topic}" STRICTLY within the official IBPS/SBI PO syllabus.
 Mix: Reasoning puzzles, Quant (DI, simplification), Banking Awareness, English.
-RULES: Include at least 2 DI questions. Options numerical and close. 50% hard, 50% medium.`,
+RULES: Include at least 2 DI questions. Options numerical and close. 50% hard, 50% medium.
+ABSOLUTE RESTRICTION: Only include topics from the official IBPS/SBI PO syllabus. No topics beyond this scope.`,
 
-    GATE: `You are a GATE question setter. Generate technical questions on "${topic}".
+    GATE: `You are a GATE question setter.
+Generate questions on "${topic}" STRICTLY from the official GATE syllabus for the relevant engineering/science discipline.
 Mix: Numerical Answer Type, Concept application, Multi-step technical problems.
-RULES: Include formulas and derivations. Options technically precise. 60% hard, 40% medium.`,
+RULES: Include formulas and derivations. Options technically precise. 60% hard, 40% medium.
+ABSOLUTE RESTRICTION: Every question must be within the official GATE syllabus. Do not include advanced research-level topics.`,
 
     "State PCS": `You are a State PCS Preliminary Examination question setter.
 Generate questions: 60% general topics + 40% state-specific topics.
 Topic received: "${topic}" — Extract STATE NAME before " — " and SUBJECT TOPIC after " — ".
 Generate 40% questions specifically about THAT STATE only. NEVER mix up states.
-STYLE: 50% Statement-based, 20% Direct, 15% Match List, 15% Statement I/II.`,
+STYLE: 50% Statement-based, 20% Direct, 15% Match List, 15% Statement I/II.
+ABSOLUTE RESTRICTION: State-specific questions must only reference verified facts about the correct state. Do not confuse states.`,
 
     "CBSE 10th": `You are a CBSE Class 10 Board Examination question setter.
-Generate questions STRICTLY from NCERT Class 10 textbooks only.
+Generate questions STRICTLY from NCERT Class 10 textbooks only — no other source.
 Mix: 40% MCQ, 25% Short Answer, 20% Case-based/Assertion-Reason, 15% Numerical.
-DIFFICULTY: 60% Easy-Medium, 40% Medium-Hard. Topic: "${topic}"`,
+DIFFICULTY: 60% Easy-Medium, 40% Medium-Hard. Topic: "${topic}"
+ABSOLUTE RESTRICTION: Every question must be directly from NCERT Class 10. Do NOT include Class 11/12 or beyond.`,
 
     "CBSE 12th": `You are a CBSE Class 12 Board Examination question setter.
-Generate questions STRICTLY from NCERT Class 12 textbooks only.
+Generate questions STRICTLY from NCERT Class 12 textbooks only — no other source.
 Mix: 35% MCQ, 25% Short Answer, 20% Long Answer/Case-based, 20% Numerical/Derivation.
-DIFFICULTY: 30% Easy, 40% Medium, 30% Hard. Topic: "${topic}"`,
+DIFFICULTY: 30% Easy, 40% Medium, 30% Hard. Topic: "${topic}"
+ABSOLUTE RESTRICTION: Every question must be directly from NCERT Class 12. Do NOT include beyond-syllabus topics.`,
 
-    General: `Generate clear, well-structured MCQ questions on "${topic}". Mix easy, medium and hard. Make distractors plausible. Explanation 2-3 sentences.`,
+    General: `You are an expert question setter. Generate well-structured MCQ questions on "${topic}".
+Mix easy, medium and hard difficulty. Make distractors plausible but clearly wrong on reflection.
+Explanation must be 2-3 sentences with the reasoning behind the correct answer.`,
   };
 
   const instruction = examInstructions[exam] || examInstructions["General"];
@@ -279,9 +301,8 @@ DIFFICULTY: 30% Easy, 40% Medium, 30% Hard. Topic: "${topic}"`,
 
   let formatPlan = "";
   if (exam === "UPSC" || exam === "Current Affairs") {
-    formatPlan = `\nMANDATORY FORMAT ASSIGNMENT:\n${buildGS1FormatPlan(
-      count
-    )}\n`;
+    formatPlan = `\nMANDATORY FORMAT ASSIGNMENT:\n${buildGS1FormatPlan(count)}\n
+NOTE: If a required format cannot be created using only in-syllabus content for "${topic}", use FORMAT 4 (DIRECT) instead. NEVER invent out-of-syllabus content to satisfy a format requirement.\n`;
   } else if (exam === "CSAT") {
     formatPlan = `\nMANDATORY FORMAT ASSIGNMENT:\n${buildCSATFormatPlan(
       count
@@ -289,6 +310,14 @@ DIFFICULTY: 30% Easy, 40% Medium, 30% Hard. Topic: "${topic}"`,
   }
 
   return `${instruction}${formatPlan}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ FINAL SYLLABUS RULE — THIS OVERRIDES EVERYTHING ABOVE:
+1. Every question must come 100% from the official ${exam} syllabus for topic "${topic}".
+2. If you are not fully certain a fact, scheme, article, term, or concept is in the ${exam} syllabus — DO NOT include it.
+3. When in doubt, leave it out. Accuracy over variety.
+4. Do NOT invent or hallucinate facts, names, dates, schemes, or data under any circumstance.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Generate EXACTLY ${count} questions on the topic: "${topic}" for ${exam} exam.
 
@@ -307,6 +336,8 @@ Format:
 - Return exactly ${count} questions, no more, no less
 - NEVER use "All of the above" or "None of the above" as options`;
 };
+
+export { getQuizPrompt };
 
 // ── BASIC ─────────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("✅ Backend running"));
@@ -609,7 +640,7 @@ app.post("/quiz/generate", async (req, res) => {
 
   if (!topic) return res.status(400).json({ error: "Topic is required" });
 
-  const safeCount = Math.min(Number(count) || 10, 10);
+  const safeCount = Math.min(Number(count) || 10, 20);
   const finalTopic =
     exam === "State PCS" && state ? `${state} — ${topic}` : topic;
 
@@ -993,6 +1024,106 @@ app.post("/transcribe", upload.single("audio"), async (req, res) => {
   }
 });
 
+// ── CHART GENERATION (Groq Only - Free) ─────────────────────────────
+
+// ── CHART GENERATION ENDPOINT ─────────────────────────────────────────────────
+// Add this to your server.js
+
+app.post("/chart/generate", async (req, res) => {
+  const { question, exam } = req.body;
+
+  if (!question) return res.status(400).json({ error: "Question is required" });
+
+  const prompt = `
+You are a strict JSON generator for a competitive exam AI app.
+
+Return ONLY valid JSON.
+Do NOT include markdown.
+Do NOT include text before or after JSON.
+
+If the question can be visualized, return:
+
+{
+  "type": "chart",
+  "chartType": "bar" | "line" | "pie" | "doughnut",
+  "title": "",
+  "description": "",
+  "data": {
+    "labels": [],
+    "datasets": [
+      {
+        "label": "",
+        "data": [],
+        "color": "#10a37f"
+      }
+    ]
+  },
+  "xAxisLabel": "",
+  "yAxisLabel": "",
+  "source": ""
+}
+
+Rules:
+- Use real, widely known factual data
+- Max 10 data points
+- Labels and data length must match
+- If cannot be visualized, return:
+
+{
+  "type": "text",
+  "answer": "Explain briefly"
+}
+
+User request:
+${question}
+`;
+
+  try {
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-4-maverick-17b-128e-instruct",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.1,
+          max_completion_tokens: 1500,
+        }),
+      }
+    );
+
+    if (!response.ok) throw new Error("Groq API error");
+
+    const data = await response.json();
+    let content = data.choices?.[0]?.message?.content?.trim();
+
+    if (!content) throw new Error("Empty response");
+
+    // Clean markdown if model adds it
+    content = content
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+
+    // Extract JSON safely
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("Invalid JSON format");
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    res.json(parsed);
+  } catch (err) {
+    console.error("Chart error:", err.message);
+    res.status(500).json({
+      type: "text",
+      answer: "⚠️ Could not generate chart. Try rephrasing.",
+    });
+  }
+});
 // ── ERROR HANDLERS ────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));
 app.use((err, req, res, next) =>

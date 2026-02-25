@@ -526,6 +526,7 @@ function TabBar({ activeTab, onTabChange }) {
     { id: "chat", icon: "💬", label: "Chat" },
     { id: "quiz", icon: "🧠", label: "Quiz" },
     { id: "planner", icon: "📅", label: "Planner" },
+    { id: "chart", icon: "📊", label: "Charts" },
   ];
   return (
     <div
@@ -4692,9 +4693,598 @@ export default function App() {
           ),
           quiz: <QuizScreen exam={exam} API_URL={API_URL} />,
           planner: <PlannerScreen exam={exam} API_URL={API_URL} />,
+          chart: <ChartScreen exam={exam} API_URL={API_URL} />,
         }}
       />
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+    </div>
+  );
+}
+// ── CHART RENDERER COMPONENT ──────────────────────────────────────────────────
+// 1. Add this import at the top of App.jsx:
+//    import { useEffect, useRef, useState } from "react";
+//
+// 2. Add Chart.js CDN in your index.html <head>:
+//    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+//
+// 3. Paste the ChartRenderer component and ChartScreen component below into App.jsx
+//
+// 4. Add "chart" to your tabs in App.jsx:
+//    tabs={{ chat: ..., quiz: ..., planner: ..., chart: <ChartScreen exam={exam} API_URL={API_URL} /> }}
+//
+// 5. Add chart tab to TabBar:
+//    { id: "chart", icon: "📊", label: "Charts" }
+
+// ── CHART RENDERER ────────────────────────────────────────────────────────────
+function ChartRenderer({ chartData }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !chartData || chartData.type === "text") return;
+
+    // Destroy existing chart
+    if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+
+    const COLORS = [
+      "#10a37f",
+      "#3b82f6",
+      "#f59e0b",
+      "#ec4899",
+      "#8b5cf6",
+      "#06b6d4",
+      "#f97316",
+      "#84cc16",
+    ];
+
+    const datasets = chartData.data.datasets.map((ds, i) => {
+      const color = ds.color || COLORS[i % COLORS.length];
+      const isPie = ["pie", "doughnut"].includes(chartData.chartType);
+      return {
+        label: ds.label,
+        data: ds.data,
+        backgroundColor: isPie
+          ? chartData.data.labels.map(
+              (_, j) => COLORS[j % COLORS.length] + "cc"
+            )
+          : color + "33",
+        borderColor: isPie
+          ? chartData.data.labels.map((_, j) => COLORS[j % COLORS.length])
+          : color,
+        borderWidth: 2,
+        borderRadius: chartData.chartType === "bar" ? 6 : 0,
+        fill: chartData.chartType === "line",
+        tension: 0.4,
+        pointBackgroundColor: color,
+        pointRadius: chartData.chartType === "line" ? 4 : 0,
+        pointHoverRadius: 6,
+      };
+    });
+
+    const ctx = canvasRef.current.getContext("2d");
+
+    chartRef.current = new window.Chart(ctx, {
+      type: chartData.chartType,
+      data: {
+        labels: chartData.data.labels,
+        datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 600, easing: "easeInOutQuart" },
+        plugins: {
+          legend: {
+            display:
+              datasets.length > 1 ||
+              ["pie", "doughnut"].includes(chartData.chartType),
+            labels: {
+              color: "#ccc",
+              font: { family: "'Figtree', sans-serif", size: 11 },
+              padding: 14,
+              usePointStyle: true,
+            },
+          },
+          tooltip: {
+            backgroundColor: "#1e1e1e",
+            titleColor: "#fff",
+            bodyColor: "#ccc",
+            borderColor: "#3a3a3a",
+            borderWidth: 1,
+            padding: 10,
+            callbacks: {
+              label: (ctx) =>
+                ` ${ctx.dataset.label || ""}: ${ctx.parsed.y ?? ctx.parsed}`,
+            },
+          },
+        },
+        scales: ["pie", "doughnut"].includes(chartData.chartType)
+          ? {}
+          : {
+              x: {
+                ticks: {
+                  color: "#888",
+                  font: { family: "'Figtree', sans-serif", size: 10 },
+                  maxRotation: 45,
+                },
+                grid: { color: "#2a2a2a" },
+                title: chartData.xAxisLabel
+                  ? {
+                      display: true,
+                      text: chartData.xAxisLabel,
+                      color: "#666",
+                      font: { size: 11 },
+                    }
+                  : { display: false },
+              },
+              y: {
+                ticks: {
+                  color: "#888",
+                  font: { family: "'Figtree', sans-serif", size: 10 },
+                },
+                grid: { color: "#2a2a2a" },
+                title: chartData.yAxisLabel
+                  ? {
+                      display: true,
+                      text: chartData.yAxisLabel,
+                      color: "#666",
+                      font: { size: 11 },
+                    }
+                  : { display: false },
+              },
+            },
+      },
+    });
+
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
+    };
+  }, [chartData]);
+
+  if (!chartData || chartData.type === "text") return null;
+
+  return (
+    <div
+      style={{
+        background: "#2a2a2a",
+        borderRadius: 16,
+        padding: "16px",
+        marginBottom: 16,
+        border: "1px solid #3a3a3a",
+      }}
+    >
+      {/* Chart Title */}
+      <div
+        style={{
+          fontSize: "0.92rem",
+          fontWeight: 700,
+          color: "#fff",
+          marginBottom: 4,
+        }}
+      >
+        {chartData.title}
+      </div>
+
+      {/* Chart Canvas */}
+      <div style={{ height: 280, position: "relative", marginBottom: 12 }}>
+        <canvas ref={canvasRef} />
+      </div>
+
+      {/* Description */}
+      {chartData.description && (
+        <div
+          style={{
+            fontSize: "0.8rem",
+            color: "#999",
+            lineHeight: 1.6,
+            marginBottom: 8,
+            padding: "10px 12px",
+            background: "#10a37f10",
+            borderRadius: 8,
+            border: "1px solid #10a37f20",
+          }}
+        >
+          💡 {chartData.description}
+        </div>
+      )}
+
+      {/* Source */}
+      {chartData.source && (
+        <div style={{ fontSize: "0.7rem", color: "#555", textAlign: "right" }}>
+          Source: {chartData.source}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CHART SCREEN ──────────────────────────────────────────────────────────────
+function ChartScreen({ exam, API_URL }) {
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [chartData, setChartData] = useState(null);
+  const [textAnswer, setTextAnswer] = useState("");
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState([]);
+
+  const SUGGESTIONS = {
+    UPSC: [
+      "India GDP growth rate 2015 to 2023",
+      "Union Budget 2024 sector allocation",
+      "Literacy rate of top 5 Indian states",
+      "India's exports by category 2023",
+      "BRICS countries GDP comparison",
+    ],
+    JEE: [
+      "Velocity time graph for uniform acceleration",
+      "Boyle's law pressure volume relationship",
+      "Projectile motion trajectory",
+      "Radioactive decay curve",
+      "Carnot cycle efficiency vs temperature",
+    ],
+    NEET: [
+      "Human population growth curve",
+      "Enzyme activity vs pH graph",
+      "Logistic vs exponential growth",
+      "Absorption spectrum of chlorophyll",
+      "Blood pressure in different vessels",
+    ],
+    "Current Affairs": [
+      "India inflation rate 2022 to 2024",
+      "Top 5 countries by renewable energy",
+      "India FDI inflows 2020 to 2024",
+      "Global temperature rise 1990 to 2024",
+      "Digital India internet users growth",
+    ],
+    General: [
+      "India GDP growth last 10 years",
+      "Population of G7 countries",
+      "Global CO2 emissions by country",
+      "India's state wise population 2011",
+      "Top 5 economies by GDP 2024",
+    ],
+  };
+
+  const suggestions = SUGGESTIONS[exam] || SUGGESTIONS["General"];
+
+  const generate = async (q) => {
+    const question = q || query;
+    if (!question.trim()) return;
+    setLoading(true);
+    setError("");
+    setChartData(null);
+    setTextAnswer("");
+
+    try {
+      const res = await fetch(`${API_URL}/chart/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, exam }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      if (data.type === "text") {
+        setTextAnswer(data.answer);
+      } else {
+        setChartData(data);
+        setHistory((prev) => [
+          { query: question, chartData: data },
+          ...prev.slice(0, 4),
+        ]);
+      }
+    } catch (err) {
+      setError("Failed to generate chart. Try a different question.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        background: "#212121",
+        color: "#ececec",
+        fontFamily: "'Figtree', sans-serif",
+        overflow: "hidden",
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "12px 16px",
+          borderBottom: "1px solid #2a2a2a",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
+          📊 Charts & Graphs
+        </div>
+        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
+      </div>
+
+      {/* Scrollable Content */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+        {/* Search Box */}
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            marginBottom: 16,
+          }}
+        >
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && generate()}
+            placeholder="e.g. India GDP growth 2015 to 2023..."
+            style={{
+              flex: 1,
+              padding: "11px 14px",
+              background: "#2a2a2a",
+              border: "1px solid #3a3a3a",
+              borderRadius: 10,
+              color: "#ececec",
+              fontSize: "0.9rem",
+              outline: "none",
+              fontFamily: "'Figtree', sans-serif",
+            }}
+          />
+          <button
+            onClick={() => generate()}
+            disabled={loading || !query.trim()}
+            style={{
+              padding: "11px 16px",
+              background: loading || !query.trim() ? "#2a2a2a" : "#10a37f",
+              border: "none",
+              borderRadius: 10,
+              color: loading || !query.trim() ? "#555" : "#fff",
+              fontWeight: 600,
+              cursor: loading || !query.trim() ? "not-allowed" : "pointer",
+              fontSize: "0.9rem",
+              flexShrink: 0,
+            }}
+          >
+            {loading ? "..." : "Go"}
+          </button>
+        </div>
+
+        {/* Suggestions */}
+        {!chartData && !textAnswer && !loading && (
+          <>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#555",
+                marginBottom: 10,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}
+            >
+              Try these for {exam}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                marginBottom: 20,
+              }}
+            >
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setQuery(s);
+                    generate(s);
+                  }}
+                  style={{
+                    padding: "11px 14px",
+                    background: "#2a2a2a",
+                    border: "1px solid #333",
+                    borderRadius: 10,
+                    color: "#ddd",
+                    fontSize: "0.85rem",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "'Figtree', sans-serif",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ color: "#10a37f" }}>📈</span> {s}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Loading */}
+        {loading && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              height: 200,
+              gap: 14,
+            }}
+          >
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                border: "3px solid #2a2a2a",
+                borderTopColor: "#10a37f",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+              }}
+            />
+            <div style={{ color: "#666", fontSize: "0.85rem" }}>
+              Generating chart...
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div
+            style={{
+              background: "#e53e3e15",
+              border: "1px solid #e53e3e40",
+              borderRadius: 10,
+              padding: "12px 14px",
+              color: "#e53e3e",
+              fontSize: "0.85rem",
+              marginBottom: 16,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {/* Chart Result */}
+        {chartData && !loading && (
+          <>
+            <ChartRenderer chartData={chartData} />
+            <button
+              onClick={() => {
+                setChartData(null);
+                setQuery("");
+              }}
+              style={{
+                width: "100%",
+                padding: 12,
+                background: "#2a2a2a",
+                border: "1px solid #3a3a3a",
+                borderRadius: 10,
+                color: "#ddd",
+                fontSize: "0.88rem",
+                cursor: "pointer",
+                marginBottom: 20,
+              }}
+            >
+              New Chart
+            </button>
+          </>
+        )}
+
+        {/* Text Answer (when chart not applicable) */}
+        {textAnswer && !loading && (
+          <div
+            style={{
+              background: "#2a2a2a",
+              borderRadius: 12,
+              padding: "14px 16px",
+              marginBottom: 16,
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#10a37f",
+                fontWeight: 700,
+                marginBottom: 8,
+                textTransform: "uppercase",
+                letterSpacing: 0.8,
+              }}
+            >
+              💬 Text Answer
+            </div>
+            <div
+              style={{ fontSize: "0.88rem", color: "#ddd", lineHeight: 1.7 }}
+            >
+              {textAnswer}
+            </div>
+            <button
+              onClick={() => {
+                setTextAnswer("");
+                setQuery("");
+              }}
+              style={{
+                marginTop: 12,
+                padding: "8px 14px",
+                background: "transparent",
+                border: "1px solid #3a3a3a",
+                borderRadius: 8,
+                color: "#888",
+                fontSize: "0.82rem",
+                cursor: "pointer",
+              }}
+            >
+              Try another
+            </button>
+          </div>
+        )}
+
+        {/* Recent Charts History */}
+        {history.length > 0 && !chartData && !textAnswer && !loading && (
+          <>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#555",
+                marginBottom: 10,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}
+            >
+              Recent
+            </div>
+            {history.map((h, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setChartData(h.chartData);
+                  setQuery(h.query);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  background: "#2a2a2a",
+                  border: "1px solid #333",
+                  borderRadius: 10,
+                  color: "#ddd",
+                  fontSize: "0.85rem",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: "'Figtree', sans-serif",
+                  marginBottom: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <span>📊</span>
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {h.query}
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
     </div>
   );
 }
