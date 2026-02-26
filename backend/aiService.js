@@ -2,8 +2,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // ── aiService.js ──────────────────────────────────────────────────────────────
-// Gemini 2.5 Pro handles ALL chat and vision — no Groq needed here.
-// Groq stays in server.js only for TTS and Transcription (mic input).
+// PRIMARY:  Gemini 2.5 Flash (free, no card needed)
+// FALLBACK: Groq Llama (already in your stack, completely free)
+
+import Groq from "groq-sdk";
 
 // ── EXAM SYSTEM PROMPTS ───────────────────────────────────────────────────────
 const getSystemPrompt = (exam) => {
@@ -85,13 +87,9 @@ const getSystemPrompt = (exam) => {
   return prompts[exam] || prompts["General"];
 };
 
-// ── GEMINI 2.5 PRO API CALL ───────────────────────────────────────────────────
+// ── GEMINI 2.5 FLASH ──────────────────────────────────────────────────────────
 const callGemini = async (contents, exam, isVision = false) => {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not set in .env");
-  }
-
-  const systemPrompt = getSystemPrompt(exam);
+  if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not set");
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -100,7 +98,7 @@ const callGemini = async (contents, exam, isVision = false) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: {
-          parts: [{ text: systemPrompt }],
+          parts: [{ text: getSystemPrompt(exam) }],
         },
         contents,
         generationConfig: {
@@ -126,44 +124,113 @@ const callGemini = async (contents, exam, isVision = false) => {
 
   if (!response.ok) {
     const err = await response.json();
-    throw new Error(
-      `Gemini API error: ${err?.error?.message || response.status}`
-    );
+    throw new Error(`Gemini error: ${err?.error?.message || response.status}`);
   }
 
   const data = await response.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
   if (!text) throw new Error("Gemini returned empty response");
 
   return text;
 };
 
+// ── GROQ FALLBACK ─────────────────────────────────────────────────────────────
+const GROQ_CHAT_MODELS = [
+  "meta-llama/llama-4-maverick-17b-128e-instruct",
+  "meta-llama/llama-4-scout-17b-16e-instruct",
+  "llama-3.3-70b-versatile",
+];
+
+const callGroqFallback = async (prompt, exam, history = []) => {
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  const systemPrompt = getSystemPrompt(exam);
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: prompt },
+  ];
+
+  for (const model of GROQ_CHAT_MODELS) {
+    try {
+      const completion = await groq.chat.completions.create({
+        messages,
+        model,
+        temperature: 0.7,
+        max_tokens: 2048,
+      });
+      const text = completion.choices?.[0]?.message?.content?.trim();
+      if (text) {
+        console.log(`✅ Chat fallback answered by Groq: ${model}`);
+        return text;
+      }
+    } catch (err) {
+      console.warn(`⚠️ Groq ${model} failed:`, err.message);
+      continue;
+    }
+  }
+
+  throw new Error("All models failed");
+};
+
+// ── GROQ VISION FALLBACK ──────────────────────────────────────────────────────
+const callGroqVisionFallback = async (fileBuffer, mimeType, exam) => {
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  const base64Url = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
+
+  const completion = await groq.chat.completions.create({
+    model: "meta-llama/llama-4-maverick-17b-128e-instruct",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: base64Url } },
+          {
+            type: "text",
+            text: `You are a ${exam} exam tutor. Analyze this image and provide a detailed, exam-relevant explanation. If it contains questions, solve them step by step.`,
+          },
+        ],
+      },
+    ],
+    max_tokens: 2048,
+    temperature: 0.4,
+  });
+
+  const text = completion.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("Groq Vision returned empty response");
+  return text;
+};
+
 // ── MAIN CHAT FUNCTION (exported) ─────────────────────────────────────────────
 export const askAI = async (prompt, exam = "General", history = []) => {
+  // Build Gemini conversation format
   const contents = [
     ...history.map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     })),
-    {
-      role: "user",
-      parts: [{ text: prompt }],
-    },
+    { role: "user", parts: [{ text: prompt }] },
   ];
 
+  // 1️⃣ Try Gemini 2.5 Flash first
   try {
     const answer = await callGemini(contents, exam, false);
-    console.log("✅ Chat answered by Gemini 2.5 Pro");
+    console.log("✅ Chat answered by Gemini 2.5 Flash");
     return answer;
   } catch (err) {
-    console.error("❌ Gemini chat failed:", err.message);
+    console.warn("⚠️ Gemini failed:", err.message, "→ falling back to Groq");
+  }
+
+  // 2️⃣ Fallback to Groq Llama
+  try {
+    return await callGroqFallback(prompt, exam, history);
+  } catch (err) {
+    console.error("❌ All chat models failed:", err.message);
     throw new Error("AI service temporarily unavailable. Please try again.");
   }
 };
 
 // ── IMAGE / VISION FUNCTION (exported) ───────────────────────────────────────
-// Gemini 2.5 Pro handles images AND PDFs natively — no OCR library needed
 export const askAIWithImage = async (
   fileBuffer,
   mimeType,
@@ -175,29 +242,41 @@ export const askAIWithImage = async (
     {
       role: "user",
       parts: [
-        {
-          inline_data: {
-            mime_type: mimeType,
-            data: base64Data,
-          },
-        },
+        { inline_data: { mime_type: mimeType, data: base64Data } },
         {
           text: `Analyze this ${
             mimeType === "application/pdf" ? "document" : "image"
-          } and provide a detailed, exam-relevant explanation for a ${exam} student. 
-If it contains questions, solve them step by step. 
+          } and provide a detailed, exam-relevant explanation for a ${exam} student.
+If it contains questions, solve them step by step.
 If it contains notes or diagrams, explain the key concepts clearly.`,
         },
       ],
     },
   ];
 
+  // 1️⃣ Try Gemini Vision first
   try {
     const answer = await callGemini(contents, exam, true);
-    console.log("✅ Image/PDF analyzed by Gemini 2.5 Pro Vision");
+    console.log("✅ Image/PDF analyzed by Gemini 2.5 Flash Vision");
     return answer;
   } catch (err) {
-    console.error("❌ Gemini Vision failed:", err.message);
-    throw new Error("Could not process file. Please try again.");
+    console.warn(
+      "⚠️ Gemini Vision failed:",
+      err.message,
+      "→ falling back to Groq Vision"
+    );
   }
+
+  // 2️⃣ Fallback to Groq Llama Vision (images only — not PDFs)
+  if (mimeType !== "application/pdf") {
+    try {
+      const answer = await callGroqVisionFallback(fileBuffer, mimeType, exam);
+      console.log("✅ Image analyzed by Groq Vision fallback");
+      return answer;
+    } catch (err) {
+      console.warn("⚠️ Groq Vision fallback failed:", err.message);
+    }
+  }
+
+  throw new Error("Could not process file. Please try again.");
 };
