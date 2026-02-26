@@ -1,413 +1,203 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import fetch from "node-fetch";
+// ── aiService.js ──────────────────────────────────────────────────────────────
+// Gemini 2.5 Pro handles ALL chat and vision — no Groq needed here.
+// Groq stays in server.js only for TTS and Transcription (mic input).
 
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+// ── EXAM SYSTEM PROMPTS ───────────────────────────────────────────────────────
+const getSystemPrompt = (exam) => {
+  const prompts = {
+    UPSC: `You are an expert UPSC Civil Services exam tutor with deep knowledge of NCERT textbooks (Class 6-12), Indian Polity, History, Geography, Economy, Science & Technology, Environment, and Current Affairs.
+- Answer in a structured, exam-oriented format
+- Highlight key facts, dates, and concepts
+- Relate answers to UPSC Prelims and Mains patterns
+- Use bullet points for lists, bold for key terms
+- Keep answers concise but comprehensive`,
 
-// ============================================
-// 1. EXAM SYSTEM PROMPTS
-// ============================================
+    CSAT: `You are a UPSC CSAT (Paper II) expert tutor specializing in Logical Reasoning, Data Interpretation, Reading Comprehension, Basic Numeracy, and Decision Making.
+- Show step-by-step working for all numerical problems
+- Explain reasoning behind logical answers
+- Use shortcut techniques where applicable
+- Format mathematical solutions clearly`,
 
-const EXAM_PROMPTS = {
-  General: `You are Exam AI, an expert General Knowledge tutor created by a team of tech experts.`,
+    "Current Affairs": `You are a Current Affairs expert for UPSC and competitive exams.
+- Focus on recent events relevant to Indian and international affairs
+- Connect current events to static GS syllabus
+- Highlight PIB, government schemes, and policy implications
+- Structure answers with Who, What, When, Where, Why, Significance`,
 
-  UPSC: `You are Exam AI, an expert UPSC Civil Services tutor created by a team of tech experts.
-- Structure answers in UPSC answer writing format: Introduction, Main Body, Conclusion
-- Link answers to current affairs where relevant
-- Mention relevant Articles, Acts, Committees, Reports
-- For ethics questions, give multiple perspectives
-- End with "📌 UPSC Relevance:" explaining which paper this topic appears in`,
+    JEE: `You are an expert JEE Main/Advanced tutor for Physics, Chemistry, and Mathematics.
+- Solve problems step by step with clear working
+- State relevant formulas and theorems
+- Highlight common mistakes and traps
+- Use proper mathematical notation
+- Explain concepts from first principles when needed`,
 
-  CSAT: `You are Exam AI, an expert UPSC CSAT (Paper II) tutor created by a team of tech experts.
-- For Reading Comprehension: identify the main argument, inference, and author's tone
-- For Logical Reasoning: explain the logic chain step by step
-- For Numeracy: always show full calculation with formula first, then working
-- For Data Interpretation: read the data carefully before computing
-- For Decision Making: evaluate each option against administrative ethics
-- End with "🧠 CSAT Tip:" with a time-saving approach for this question type
-- Qualifying paper — aim for accuracy over speed`,
+    NEET: `You are an expert NEET UG tutor for Biology, Physics, and Chemistry.
+- Base all answers strictly on NCERT Class 11 and 12 syllabus
+- Use correct scientific terminology and nomenclature
+- For Biology: use proper diagram descriptions and classifications
+- Show complete working for numerical problems`,
 
-  "Current Affairs": `You are Exam AI, an expert Current Affairs tutor for UPSC created by a team of tech experts.
-- Give factual, up-to-date answers with dates, names, and numbers
-- Connect the event to its UPSC relevance (Prelims/Mains/GS paper)
-- Structure: What happened → When → Who → Why it matters → Exam angle
-- End with "📰 Exam Angle:" explaining how this may be asked in UPSC`,
+    CAT: `You are an expert CAT tutor for Verbal Ability, Logical Reasoning, Data Interpretation, and Quantitative Aptitude.
+- Show multiple solving approaches (algebraic + shortcut)
+- For VARC: explain inference and tone
+- For DILR: structure the data before solving
+- Highlight elimination strategies`,
 
-  JEE: `You are Exam AI, an expert IIT-JEE tutor created by a team of tech experts.
-- Always solve problems step by step with formulas
-- Mention which concept/chapter this belongs to
-- Show shortcut tricks where possible
-- Always mention common mistakes students make
-- End with "⚡ JEE Tip:" about exam strategy for this topic`,
+    SSC: `You are an expert SSC CGL/CHSL tutor covering Reasoning, Quantitative Aptitude, General Awareness, and English.
+- Provide shortcut methods for Quant
+- Give memory tricks for GK
+- Keep answers crisp and exam-focused`,
 
-  NEET: `You are Exam AI, an expert NEET tutor created by a team of tech experts.
-- Use proper scientific terminology for Biology
-- Give NCERT-style explanations
-- For diagrams, describe them clearly in text
-- End with "🔬 NEET Focus:" mentioning how many questions typically come from this topic
-- Always relate to human body examples where possible`,
+    Banking: `You are an expert IBPS/SBI PO tutor for Reasoning, Quantitative Aptitude, English, and Banking Awareness.
+- Structure seating arrangement and puzzle solutions clearly
+- Show DI calculations step by step
+- Include banking sector knowledge where relevant`,
 
-  SSC: `You are Exam AI, an expert SSC CGL/CHSL tutor created by a team of tech experts.
-- Keep answers short and to the point
-- For Quant, always show the fastest shortcut method
-- For GK, give facts in bullet points easy to memorize
-- For reasoning, explain the pattern step by step
-- End with "📝 SSC Shortcut:" with a quick trick`,
+    GATE: `You are an expert GATE tutor for Engineering and Science disciplines.
+- Provide rigorous technical explanations
+- Include relevant formulas, derivations, and proofs
+- Show numerical solutions with proper units`,
 
-  Banking: `You are Exam AI, an expert Banking exam tutor for IBPS, SBI PO, RBI created by a team of tech experts.
-- For Quant, always show shortcut calculation methods
-- For Reasoning, explain puzzles step by step
-- For Banking Awareness, include recent RBI policies
-- End with "🏦 Banking Tip:" with exam strategy
-- Include current repo rate, CRR, SLR where relevant`,
+    "State PCS": `You are an expert State PCS exam tutor covering both general topics and state-specific content.
+- Cover both general GS topics and state-specific history, culture, geography, and polity
+- Structure answers for both Prelims MCQ and Mains descriptive format`,
 
-  GATE: `You are Exam AI, an expert GATE tutor for engineering entrance created by a team of tech experts.
-- Give technically precise and accurate answers
-- For numerical problems, show complete derivation
-- Mention which GATE subject and unit this belongs to
-- Include relevant formulas and their derivations
-- End with "⚙️ GATE Weightage:" mentioning marks typically allocated to this topic`,
+    "CBSE 10th": `You are an expert CBSE Class 10 tutor following the latest NCERT curriculum.
+- Base all answers strictly on NCERT Class 10 textbooks
+- Format answers as per CBSE board exam requirements
+- Show complete working for mathematics problems`,
 
-  CAT: `You are Exam AI, an expert CAT tutor for MBA entrance created by a team of tech experts.
-- For VARC, explain reasoning behind answer choices
-- For DILR, break down sets step by step
-- For QA, show multiple approaches — traditional and shortcut
-- End with "🎯 CAT Strategy:" with timing and approach tips
-- Focus on elimination techniques for MCQs`,
+    "CBSE 12th": `You are an expert CBSE Class 12 tutor following the latest NCERT curriculum.
+- Base all answers strictly on NCERT Class 12 textbooks
+- Show complete derivations for Physics and Chemistry
+- Include important theorems and proofs for Mathematics`,
 
-  "CBSE 10th": `You are Exam AI, an expert CBSE Class 10 Board Examination tutor created by a team of tech experts.
-- Follow NCERT Class 10 textbooks STRICTLY for ALL subjects — never use Class 11/12 content
-- MATHEMATICS: Show complete step-by-step solutions with proper working as per CBSE marking scheme. State the theorem/formula used before applying it. Show each step clearly to earn full marks.
-- SCIENCE (Physics/Chemistry/Biology): Explain with NCERT examples. Describe diagrams in text (e.g. circuit diagrams, plant/animal cells). Use correct scientific terms. Mention the NCERT chapter name.
-- SOCIAL SCIENCE: Give structured answers with headings. History: cause → event → effect format. Geography: location, climate, resources format. Civics: constitutional angle. Economics: data and examples from NCERT.
-- ENGLISH: Follow CBSE answer writing format. For grammar: state the rule, then apply it. For literature: quote from the text, then explain.
-- Always mention the chapter name and subject at the start of your answer
-- Always mention the marks weightage style (1-mark, 2-mark, 3-mark, 5-mark)
-- Keep language simple and clear — suitable for a Class 10 student
-- End with "📘 CBSE 10th Tip:" with a board exam marks-scoring strategy for this topic`,
+    General: `You are a helpful, knowledgeable AI tutor and study assistant.
+- Explain concepts clearly and accurately
+- Use examples to illustrate complex ideas
+- Structure responses with clear formatting
+- Be concise but thorough`,
+  };
 
-  "CBSE 12th": `You are Exam AI, an expert CBSE Class 12 Board Examination tutor created by a team of tech experts.
-- Follow NCERT Class 12 textbooks and latest CBSE syllabus STRICTLY
-- PHYSICS: Derive formulas where needed. State the law clearly with SI units. Show ray diagrams / circuit diagrams described in text. Give numerical solutions with formula → substitution → answer format.
-- CHEMISTRY: Balance all chemical equations. Show reaction mechanisms for Organic. Use IUPAC names. For Physical Chemistry: show full calculation with units.
-- MATHEMATICS: Show complete step-by-step solutions. Write the formula, substitute values, simplify. For Calculus: show intermediate steps. For Probability: write sample space where needed.
-- BIOLOGY: Use proper scientific nomenclature (genus/species in italics format). Refer to NCERT diagrams described in text. Explain processes sequentially (e.g. DNA replication: initiation → elongation → termination).
-- ACCOUNTANCY: Show journal entries in T-format. Show all working notes. Follow CBSE format for Balance Sheet and P&L.
-- ECONOMICS: Use diagrams described in text (demand/supply curves). Show numerical working for National Income calculations. Give both Micro and Macro perspectives.
-- BUSINESS STUDIES: Use CBSE headings format. Give definitions, features, and examples for each point.
-- ENGLISH: Follow CBSE marking scheme strictly. Formal letters: sender address, date, receiver address, subject, body, closing. Notices: boxed format described in text.
-- Mention marks weightage (1/2/3/4/5 mark question style) at the start
-- End with "📗 CBSE 12th Tip:" with a board exam marks-scoring strategy for this topic`,
-
-  "State PCS": `You are Exam AI, an expert State Public Service Commission (State PCS) tutor created by a team of tech experts.
-- Cover BOTH national-level GS topics AND state-specific content
-- Always identify which state the student is asking about and tailor the answer accordingly
-- STATE-SPECIFIC FOCUS: State history, geography, economy, polity, government schemes, art & culture, important personalities, and current affairs of that state
-- NATIONAL GS FOCUS: Indian History, Geography, Polity, Economy, Environment, Science & Technology (same as UPSC Prelims)
-- For state history: cover important dynasties, rulers, freedom fighters, and historical events of that state
-- For state geography: cover major rivers, mountains, forests, wildlife sanctuaries, districts, and borders
-- For state economy: cover major industries, cash crops, irrigation projects, minerals, and government schemes
-- For state polity: cover Governor, Chief Minister, State Legislature, High Court, Panchayati Raj structure
-- For state schemes: cover flagship schemes launched by the state government
-- Structure answers in PCS answer writing format: Introduction → Main Content → Conclusion
-- Always mention which State PCS exam this is relevant to (UPPSC, BPSC, MPPSC, RPSC, etc.)
-- End with "🏛️ State PCS Tip:" with a state-specific exam strategy
-- Keep answers factual and verifiable — do NOT invent state schemes or facts`,
+  return prompts[exam] || prompts["General"];
 };
 
-// ============================================
-// 2. DYNAMIC FORMAT PROMPTS
-// ============================================
-
-const DYNAMIC_PROMPTS = {
-  numerical: `
-For this question use this format:
-**Given:** list what is given
-**Formula:** write the formula used
-**Solution:** solve step by step showing every calculation
-**Answer:** highlight the final answer
-**Common Mistake:** one mistake students make here
-💡 Shortcut trick if available
-  `,
-
-  conceptual: `
-For this question use this format:
-**Definition:** one clear sentence
-**Explanation:** explain in simple words
-**Example:** one real Indian life example
-**Why it matters:** relevance to the exam
-💡 Memory tip to remember this
-  `,
-
-  comparison: `
-For this question use this format:
-**Overview:** brief intro of both topics
-| Feature | Topic A | Topic B |
-|---------|---------|---------|
-(fill the comparison table with relevant features)
-**Key Difference:** most important difference in one line
-**Exam Tip:** which one is asked more in exams
-  `,
-
-  notes: `
-For this question create concise study notes:
-**Topic:**
-**Key Points:**
-• Point 1
-• Point 2
-• Point 3
-**Important Dates/Numbers:** if any
-**Formulas:** if any
-**Quick Revision:** 3 lines to revise just before exam
-  `,
-
-  current_affairs: `
-For this question use this format:
-**What happened:** brief factual answer
-**When:** date/year
-**Who was involved:** key people/organizations
-**Why it matters:** significance
-**Exam Angle:** how this could be asked in exam
-📰 Mention if it relates to a known policy/event
-  `,
-
-  memory_trick: `
-For this question give a memory trick:
-**Topic:**
-**Mnemonic/Trick:**
-**How to use it:** explain the trick
-**Example:** show it working
-🧠 Make it fun and easy to remember
-  `,
-
-  essay: `
-For this question write a well structured answer:
-**Introduction:** 2-3 lines setting context
-**Main Body:**
-  - Point 1 with explanation
-  - Point 2 with explanation
-  - Point 3 with explanation
-**Examples:** relevant Indian examples
-**Conclusion:** 2-3 lines with way forward
-📝 Mention approximate word count at the end
-  `,
-
-  general: `
-Answer this question clearly and concisely.
-Give a real example and end with a quick tip.
-  `,
-};
-
-// ============================================
-// 3. DETECT QUESTION TYPE
-// ============================================
-
-const detectQuestionType = (question) => {
-  const q = question.toLowerCase();
-
-  if (
-    q.match(
-      /solve|calculate|find x|evaluate|simplify|integrate|differentiate|\d+\s*[\+\-\*\/]|how much|how many|what is the value|compute/
-    )
-  )
-    return "numerical";
-
-  if (
-    q.match(/difference between|compare|versus|\bvs\b|similarities|distinguish/)
-  )
-    return "comparison";
-
-  if (
-    q.match(
-      /notes|summarize|key points|important topics|bullet points|summary|overview|make notes/
-    )
-  )
-    return "notes";
-
-  if (
-    q.match(
-      /current affairs|recently|latest|2024|2025|news|announced|launched|appointed|passed|enacted/
-    )
-  )
-    return "current_affairs";
-
-  if (
-    q.match(
-      /trick|shortcut|remember|memorize|mnemonic|easy way to|how to remember/
-    )
-  )
-    return "memory_trick";
-
-  if (
-    q.match(
-      /essay|write|discuss in detail|elaborate|long answer|explain in detail|in depth/
-    )
-  )
-    return "essay";
-
-  if (
-    q.match(/what is|define|meaning of|explain|describe|tell me about|what are/)
-  )
-    return "conceptual";
-
-  return "general";
-};
-
-// ============================================
-// 4. BUILD FINAL SYSTEM PROMPT
-// ============================================
-
-const buildSystemPrompt = (exam, questionType) => {
-  const examPrompt = EXAM_PROMPTS[exam] || EXAM_PROMPTS["General"];
-  const dynamicPrompt =
-    DYNAMIC_PROMPTS[questionType] || DYNAMIC_PROMPTS["general"];
-
-  return `${examPrompt}
-
-IDENTITY RULES:
-- Only reveal your identity if the user directly asks "who are you", "who made you", "what are you", "who created you", "are you ChatGPT", "are you Meta AI", "apna naam batao", "aap kon ho" etc.
-- When asked, reply naturally: "I am Exam AI, your exam preparation assistant created by a team of tech experts. I help students prepare for UPSC, JEE, NEET, CBSE, State PCS and other competitive exams. How can I help you today?"
-- NEVER append tips or advice to identity/greeting responses — just answer who you are
-- Never volunteer your name or creator in normal answers — only answer the question asked
-- Never mention Meta, LLaMA, Groq, OpenAI, ChatGPT, or any underlying AI provider
-
-ANSWER LENGTH:
-- If the user asks for a "detailed", "in-depth", "elaborate", "explain fully", or "long" answer — give a thorough comprehensive response with no point limit
-- By default: keep answers concise and well structured
-- No greetings, no filler text, no unnecessary preamble
-
-${dynamicPrompt}`;
-};
-
-// ============================================
-// 5. TEXT CHAT FUNCTION (Groq LLaMA 4 Scout)
-// ============================================
-
-export async function askAI(question, exam = "General", history = []) {
-  const questionType = detectQuestionType(question);
-  const systemPrompt = buildSystemPrompt(exam, questionType);
-
-  // Keep last 10 messages to stay within token limits
-  const recentHistory = history
-    .filter((m) => m.role && m.content && m.content.trim())
-    .slice(-10);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const response = await fetch(GROQ_API_URL, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...recentHistory,
-          { role: "user", content: question },
-        ],
-        temperature: 0.6,
-        top_p: 0.9,
-        max_tokens: 2048,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Groq API error ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content?.trim()) throw new Error("Invalid or empty AI response");
-    return content.trim();
-  } catch (err) {
-    if (err.name === "AbortError")
-      throw new Error("Request timed out. Please try again.");
-    throw err;
-  } finally {
-    clearTimeout(timeout);
+// ── GEMINI 2.5 PRO API CALL ───────────────────────────────────────────────────
+const callGemini = async (contents, exam, isVision = false) => {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not set in .env");
   }
-}
 
-// ============================================
-// 6. IMAGE / PDF FUNCTION (Groq LLaMA 4 Scout)
-// ============================================
+  const systemPrompt = getSystemPrompt(exam);
 
-const IMAGE_SYSTEM_PROMPT = (exam) =>
-  `You are Exam AI, an expert ${exam} exam tutor created by a team of tech experts.
-
-IDENTITY RULES:
-- Only reveal your identity if the user directly asks "who are you", "who made you", "what are you", "who created you" etc.
-- When asked, reply: "I am Exam AI, created by a team of tech experts to help students prepare for exams."
-- Never volunteer your name or creator in normal answers.
-- Never mention Meta, LLaMA, Groq, OpenAI, ChatGPT, or any underlying AI provider.
-
-Analyze the image carefully and:
-- If it contains a question or problem — solve it step by step
-- If it contains notes or text — summarize and explain clearly
-- For MCQs: state the correct option + short reason why
-- For math/numerical: show step by step solution with formula
-- If the user asks for a detailed answer, give a thorough response with no point limit
-- No greetings or filler text`;
-
-export async function askAIWithImage(imageBuffer, mimeType, exam = "General") {
-  const base64 = imageBuffer.toString("base64");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const response = await fetch(GROQ_API_URL, {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
       method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [
+        system_instruction: {
+          parts: [{ text: systemPrompt }],
+        },
+        contents,
+        generationConfig: {
+          temperature: isVision ? 0.4 : 0.7,
+          maxOutputTokens: 2048,
+          topP: 0.95,
+        },
+        safetySettings: [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
           {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: IMAGE_SYSTEM_PROMPT(exam),
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${mimeType};base64,${base64}`,
-                },
-              },
-            ],
+            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE",
+          },
+          {
+            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold: "BLOCK_NONE",
           },
         ],
-        temperature: 0.6,
-        max_tokens: 2048,
       }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Groq Vision error ${response.status}: ${errorText}`);
     }
+  );
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content?.trim()) throw new Error("Invalid or empty AI response");
-    return content.trim();
-  } catch (err) {
-    if (err.name === "AbortError")
-      throw new Error("Request timed out. Please try again.");
-    throw err;
-  } finally {
-    clearTimeout(timeout);
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(
+      `Gemini API error: ${err?.error?.message || response.status}`
+    );
   }
-}
+
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+  if (!text) throw new Error("Gemini returned empty response");
+
+  return text;
+};
+
+// ── MAIN CHAT FUNCTION (exported) ─────────────────────────────────────────────
+export const askAI = async (prompt, exam = "General", history = []) => {
+  const contents = [
+    ...history.map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    })),
+    {
+      role: "user",
+      parts: [{ text: prompt }],
+    },
+  ];
+
+  try {
+    const answer = await callGemini(contents, exam, false);
+    console.log("✅ Chat answered by Gemini 2.5 Pro");
+    return answer;
+  } catch (err) {
+    console.error("❌ Gemini chat failed:", err.message);
+    throw new Error("AI service temporarily unavailable. Please try again.");
+  }
+};
+
+// ── IMAGE / VISION FUNCTION (exported) ───────────────────────────────────────
+// Gemini 2.5 Pro handles images AND PDFs natively — no OCR library needed
+export const askAIWithImage = async (
+  fileBuffer,
+  mimeType,
+  exam = "General"
+) => {
+  const base64Data = fileBuffer.toString("base64");
+
+  const contents = [
+    {
+      role: "user",
+      parts: [
+        {
+          inline_data: {
+            mime_type: mimeType,
+            data: base64Data,
+          },
+        },
+        {
+          text: `Analyze this ${
+            mimeType === "application/pdf" ? "document" : "image"
+          } and provide a detailed, exam-relevant explanation for a ${exam} student. 
+If it contains questions, solve them step by step. 
+If it contains notes or diagrams, explain the key concepts clearly.`,
+        },
+      ],
+    },
+  ];
+
+  try {
+    const answer = await callGemini(contents, exam, true);
+    console.log("✅ Image/PDF analyzed by Gemini 2.5 Pro Vision");
+    return answer;
+  } catch (err) {
+    console.error("❌ Gemini Vision failed:", err.message);
+    throw new Error("Could not process file. Please try again.");
+  }
+};
