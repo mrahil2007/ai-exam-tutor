@@ -138,9 +138,12 @@ const callGemini = async (contents, exam, isVision = false) => {
             },
             contents,
             generationConfig: {
-              temperature: isVision ? 0.4 : 0.7,
-              maxOutputTokens: 2048,
+              temperature: isVision ? 0.4 : 0.3,
+              maxOutputTokens: 8192,
               topP: 0.95,
+              thinkingConfig: {
+                thinkingBudget: 1024, // limits hidden thinking tokens, saves room for output
+              },
             },
             safetySettings: [
               { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
