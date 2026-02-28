@@ -10,8 +10,55 @@ import Groq from "groq-sdk";
 import { MongoClient, ObjectId } from "mongodb";
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(
+  cors({
+    origin: [
+      "https://examai-in.com",
+      "https://www.examai-in.com",
+      "https://ai-exam-tutor-ten.vercel.app",
+      "http://localhost:5173",
+    ],
+    methods: ["GET", "POST", "PATCH", "DELETE"],
+  })
+);
+app.use(express.json({ limit: "10kb" }));
+import rateLimit from "express-rate-limit";
+
+// ── RATE LIMITING ─────────────────────────────────────────────────────────────
+
+// General API — 100 requests per 15 minutes per IP
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: "Too many requests. Please try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// AI endpoints — 15 requests per minute per IP
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  message: { error: "Too many AI requests. Please slow down." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Quiz — 20 per hour per IP (on top of your existing per-user limit)
+const quizLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  message: { error: "Quiz limit reached. Try again in an hour." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply limits
+app.use(apiLimiter); // all routes
+app.use("/chat", aiLimiter); // chat endpoint
+app.use("/chart/generate", aiLimiter); // chart endpoint
+app.use("/image", aiLimiter); // image/PDF endpoint
+app.use("/quiz/generate", quizLimiter); // quiz endpoint
 
 const upload = multer();
 
