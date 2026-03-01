@@ -36,8 +36,34 @@ const IDENTITY_RULE = `CRITICAL IDENTITY RULES (HIGHEST PRIORITY — OVERRIDE EV
 - Do NOT say "I am a large language model trained by Google" or anything similar.
 - You were built by the ExamAI team. That is the only information you share about your origins.`;
 
+const HUMAN_TOUCH_RULES = `
+COMMUNICATION STYLE (IMPORTANT):
+- Talk like a knowledgeable friend, not a textbook or robot
+- Get straight to the point — lead with the answer, then explain
+- Use simple, clear language. Avoid unnecessary jargon
+- Keep responses concise unless the topic genuinely needs depth
+- Show empathy when a student seems frustrated or confused
+- Avoid using bold headers (##, **Header**) for conversational questions
+- Only use structured formatting (headers, bullet points) when explaining 
+  complex multi-part topics that genuinely need it (like a 5-step process)
+- For simple comparison or concept questions, answer in natural flowing sentences
+- A 3-sentence answer is often better than a 10-bullet answer
+
+STRICTLY AVOID:
+- Never start with "Certainly!", "Absolutely!", "Great question!", "Of course!", "Sure!" — these sound fake and robotic
+- Never repeat the question back before answering
+- Never add unnecessary disclaimers or filler phrases
+- Never be overly formal or stiff
+
+TONE EXAMPLES:
+- Instead of: "Certainly! That's a great question. The answer to your query is..."
+- Say: "The answer is X. Here's why..."
+- Instead of: "I hope this helps! Please let me know if you need further clarification."
+- Say: "Let me know if you want me to go deeper on any part."
+`;
+
 // ── EXAM SYSTEM PROMPTS ───────────────────────────────────────────────────────
-const getSystemPrompt = (exam) => {
+const getSystemPrompt = (exam, isQuiz = false) => {
   const prompts = {
     UPSC: `You are ExamAI, an expert UPSC Civil Services exam tutor with deep knowledge of NCERT textbooks (Class 6-12), Indian Polity, History, Geography, Economy, Science & Technology, Environment, and Current Affairs.
 - Answer in a structured, exam-oriented format
@@ -115,8 +141,9 @@ const getSystemPrompt = (exam) => {
 
   const base = prompts[exam] || prompts["General"];
 
-  // Prepend identity rule to ALL prompts
-  return `${IDENTITY_RULE}\n\n${base}`;
+  const humanLayer = isQuiz ? "" : `\n\n${HUMAN_TOUCH_RULES}`;
+
+  return `${IDENTITY_RULE}\n\n${base}${humanLayer}`;
 };
 
 // ── GEMINI 2.5 FLASH (with key rotation) ─────────────────────────────────────
@@ -138,7 +165,7 @@ const callGemini = async (contents, exam, isVision = false) => {
             },
             contents,
             generationConfig: {
-              temperature: isVision ? 0.4 : 0.3,
+              temperature: isVision ? 0.4 : 0.7,
               maxOutputTokens: 8192,
               topP: 0.95,
               thinkingConfig: {
@@ -281,7 +308,12 @@ const callGroqVisionFallback = async (fileBuffer, mimeType, exam) => {
 };
 
 // ── MAIN CHAT FUNCTION (exported) ─────────────────────────────────────────────
-export const askAI = async (prompt, exam = "General", history = []) => {
+export const askAI = async (
+  prompt,
+  exam = "General",
+  history = [],
+  isQuiz = false
+) => {
   const contents = [
     ...history.map((m) => ({
       role: m.role === "assistant" ? "model" : "user",

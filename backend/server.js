@@ -508,7 +508,7 @@ Question: ${question}
       }
     }
 
-    const answer = await askAI(finalPrompt, exam, history);
+    const answer = await askAI(finalPrompt, exam, history, false);
 
     // ── SAVE CHAT ─────────────────────────────
     if (userId && chatId) {

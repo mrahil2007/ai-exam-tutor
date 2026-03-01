@@ -1,5 +1,28 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
+import { auth } from "./firebase";
+
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
+  onAuthStateChanged,
+  getAuth,
+  signOut,
+} from "firebase/auth";
+
+const provider = new GoogleAuthProvider();
+
+// ── USER ID ───────────────────────────────────────────────────────────────────
+const getUserId = () => {
+  const uid = getAuth().currentUser?.uid;
+  if (uid) {
+    localStorage.setItem("examai_userId", uid);
+    return uid;
+  }
+  return localStorage.getItem("examai_userId");
+};
 
 // ── TYPING ANIMATION ──────────────────────────────────────────────────────────
 const typeText = (text, setMessages, onDone) => {
@@ -30,15 +53,6 @@ const typeText = (text, setMessages, onDone) => {
       onDone?.();
     }
   }, 55);
-};
-
-const getUserId = () => {
-  let userId = localStorage.getItem("examai_userId");
-  if (!userId) {
-    userId = "user_" + Math.random().toString(36).slice(2, 11);
-    localStorage.setItem("examai_userId", userId);
-  }
-  return userId;
 };
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -96,7 +110,6 @@ const TOPIC_PLACEHOLDERS = {
 };
 
 const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
-const USER_ID = getUserId();
 
 const EXAM_META = {
   General: { icon: "💬", color: "#10a37f", desc: "All subjects" },
@@ -244,11 +257,422 @@ function SplashScreen({ onDone }) {
   );
 }
 
+// ── LOGIN SCREEN ──────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin, onEmailLogin, exam }) {
+  const [loading, setLoading] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const meta = EXAM_META[exam] || { icon: "🎓", color: "#10a37f" };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await onLogin();
+    } catch (e) {
+      setError("Sign-in failed. Please try again.");
+      setLoading(false);
+    }
+  };
+
+  const handleEmailLogin = async () => {
+    if (!email.trim() || !password.trim()) {
+      setError("Please enter email and password.");
+      return;
+    }
+    setEmailLoading(true);
+    setError("");
+    try {
+      await onEmailLogin(email.trim(), password.trim(), isSignUp);
+    } catch (e) {
+      const code = e.code;
+      if (
+        code === "auth/user-not-found" ||
+        code === "auth/wrong-password" ||
+        code === "auth/invalid-credential"
+      ) {
+        setError("Invalid email or password.");
+      } else if (code === "auth/email-already-in-use") {
+        setError("Email already in use. Try logging in.");
+      } else if (code === "auth/weak-password") {
+        setError("Password must be at least 6 characters.");
+      } else if (code === "auth/invalid-email") {
+        setError("Invalid email address.");
+      } else {
+        setError("Something went wrong. Try again.");
+      }
+      setEmailLoading(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 200,
+        background: "#0a0a0f",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'Figtree', sans-serif",
+        padding: "0 24px",
+      }}
+    >
+      <style>{`
+        @keyframes loginFadeUp { from{opacity:0;transform:translateY(28px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes loginGlow { 0%,100%{opacity:0.5;transform:scale(1)} 50%{opacity:0.8;transform:scale(1.08)} }
+        @keyframes loginRing { 0%{transform:scale(0.7);opacity:0.6} 100%{transform:scale(2.0);opacity:0} }
+        .login-btn { transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease, opacity 0.15s ease; }
+        .login-btn:hover:not(:disabled) { transform: translateY(-2px) scale(1.02); box-shadow: 0 12px 40px rgba(16,163,127,0.3); }
+        .login-btn:active:not(:disabled) { transform: scale(0.96); }
+        .login-input:focus { border-color: ${meta.color} !important; }
+      `}</style>
+
+      {/* background glow */}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          pointerEvents: "none",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: "15%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 380,
+            height: 380,
+            background: `radial-gradient(circle, ${meta.color}22 0%, transparent 70%)`,
+            filter: "blur(60px)",
+            animation: "loginGlow 4s ease infinite",
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 360,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          animation:
+            "loginFadeUp 0.5s cubic-bezier(0.25,0.46,0.45,0.94) 0.1s both",
+        }}
+      >
+        {/* Logo */}
+        <div
+          style={{
+            position: "relative",
+            width: 96,
+            height: 96,
+            marginBottom: 28,
+          }}
+        >
+          {[0, 350, 700].map((d) => (
+            <div
+              key={d}
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: "50%",
+                border: `1.5px solid ${meta.color}55`,
+                animation: `loginRing 2s ease-out ${d}ms infinite`,
+              }}
+            />
+          ))}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              margin: "auto",
+              width: 72,
+              height: 72,
+              borderRadius: 20,
+              background: `linear-gradient(135deg, ${meta.color}, ${meta.color}bb)`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 32,
+              boxShadow: `0 0 36px ${meta.color}55`,
+            }}
+          >
+            🎓
+          </div>
+        </div>
+
+        <div
+          style={{
+            fontSize: "2rem",
+            fontWeight: 800,
+            color: "#fff",
+            letterSpacing: -0.8,
+            textAlign: "center",
+            marginBottom: 6,
+          }}
+        >
+          Exam<span style={{ color: meta.color }}>AI</span>
+        </div>
+        <div
+          style={{
+            fontSize: "0.85rem",
+            color: "#555",
+            textAlign: "center",
+            marginBottom: 28,
+          }}
+        >
+          {isSignUp ? "Create your account" : "Sign in to continue"}
+        </div>
+
+        {/* Toggle Sign In / Sign Up */}
+        <div
+          style={{
+            display: "flex",
+            background: "#1a1a1a",
+            borderRadius: 10,
+            padding: 3,
+            width: "100%",
+            marginBottom: 20,
+            border: "1px solid #2a2a2a",
+          }}
+        >
+          {["Sign In", "Sign Up"].map((label, i) => (
+            <button
+              key={label}
+              onClick={() => {
+                setIsSignUp(i === 1);
+                setError("");
+              }}
+              style={{
+                flex: 1,
+                padding: "8px 0",
+                borderRadius: 8,
+                border: "none",
+                cursor: "pointer",
+                fontSize: "0.88rem",
+                fontWeight: 600,
+                fontFamily: "'Figtree', sans-serif",
+                transition: "all 0.2s",
+                background: isSignUp === (i === 1) ? meta.color : "transparent",
+                color: isSignUp === (i === 1) ? "#fff" : "#555",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Email Input */}
+        <div style={{ width: "100%", marginBottom: 10 }}>
+          <input
+            className="login-input"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email address"
+            onKeyDown={(e) => e.key === "Enter" && handleEmailLogin()}
+            style={{
+              width: "100%",
+              padding: "13px 14px",
+              background: "#1a1a1a",
+              border: "1px solid #333",
+              borderRadius: 12,
+              color: "#ececec",
+              fontSize: "0.95rem",
+              outline: "none",
+              fontFamily: "'Figtree', sans-serif",
+              transition: "border-color 0.2s",
+            }}
+          />
+        </div>
+
+        {/* Password Input */}
+        <div style={{ width: "100%", marginBottom: 16 }}>
+          <input
+            className="login-input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            onKeyDown={(e) => e.key === "Enter" && handleEmailLogin()}
+            style={{
+              width: "100%",
+              padding: "13px 14px",
+              background: "#1a1a1a",
+              border: "1px solid #333",
+              borderRadius: 12,
+              color: "#ececec",
+              fontSize: "0.95rem",
+              outline: "none",
+              fontFamily: "'Figtree', sans-serif",
+              transition: "border-color 0.2s",
+            }}
+          />
+        </div>
+
+        {/* Email Login Button */}
+        <button
+          className="login-btn"
+          onClick={handleEmailLogin}
+          disabled={emailLoading}
+          style={{
+            width: "100%",
+            padding: "14px 20px",
+            borderRadius: 14,
+            background: `linear-gradient(135deg, ${meta.color}, ${meta.color}cc)`,
+            border: "none",
+            cursor: emailLoading ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            opacity: emailLoading ? 0.7 : 1,
+            marginBottom: 12,
+            boxShadow: `0 4px 24px ${meta.color}40`,
+          }}
+        >
+          {emailLoading ? (
+            <div
+              style={{
+                width: 20,
+                height: 20,
+                border: "2px solid rgba(255,255,255,0.3)",
+                borderTopColor: "#fff",
+                borderRadius: "50%",
+                animation: "spin 0.7s linear infinite",
+              }}
+            />
+          ) : (
+            <span
+              style={{ fontSize: "0.95rem", fontWeight: 700, color: "#fff" }}
+            >
+              {isSignUp ? "Create Account" : "Sign In with Email"}
+            </span>
+          )}
+        </button>
+
+        {/* Divider */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            width: "100%",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
+          <span style={{ fontSize: "0.72rem", color: "#444" }}>or</span>
+          <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
+        </div>
+
+        {/* Google Button */}
+        <button
+          className="login-btn"
+          onClick={handleGoogleLogin}
+          disabled={loading}
+          style={{
+            width: "100%",
+            padding: "14px 20px",
+            borderRadius: 14,
+            background: "#1a1a1a",
+            border: "1px solid #333",
+            cursor: loading ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            opacity: loading ? 0.6 : 1,
+            boxShadow: "0 4px 24px rgba(0,0,0,0.4)",
+          }}
+        >
+          {loading ? (
+            <div
+              style={{
+                width: 20,
+                height: 20,
+                border: "2px solid #333",
+                borderTopColor: meta.color,
+                borderRadius: "50%",
+                animation: "spin 0.7s linear infinite",
+              }}
+            />
+          ) : (
+            <>
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <path
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  fill="#4285F4"
+                />
+                <path
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  fill="#34A853"
+                />
+                <path
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+                  fill="#FBBC05"
+                />
+                <path
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                  fill="#EA4335"
+                />
+              </svg>
+              <span
+                style={{ fontSize: "0.95rem", fontWeight: 600, color: "#ddd" }}
+              >
+                Continue with Google
+              </span>
+            </>
+          )}
+        </button>
+
+        {error && (
+          <div
+            style={{
+              marginTop: 12,
+              width: "100%",
+              padding: "10px 14px",
+              background: "#e53e3e15",
+              border: "1px solid #e53e3e40",
+              borderRadius: 10,
+              fontSize: "0.82rem",
+              color: "#e53e3e",
+              textAlign: "center",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <div
+          style={{
+            marginTop: 24,
+            fontSize: "0.68rem",
+            color: "#333",
+            textAlign: "center",
+            lineHeight: 1.7,
+          }}
+        >
+          By continuing you agree to our Terms of Service
+          <br />
+          and Privacy Policy
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── EXAM SELECT SCREEN ────────────────────────────────────────────────────────
 function ExamSelectScreen({ onSelect, currentExam }) {
-  const [selected, setSelected] = useState(
-    localStorage.getItem("examai_exam") || null
-  );
+  const [selected, setSelected] = useState(currentExam || null);
   const [leaving, setLeaving] = useState(false);
 
   const handleSelect = (e) => {
@@ -366,7 +790,7 @@ function ExamSelectScreen({ onSelect, currentExam }) {
         >
           {EXAMS.map((e, i) => {
             const meta = EXAM_META[e];
-            const isSelected = selected === e || currentExam === e;
+            const isSelected = selected === e;
             return (
               <button
                 key={e}
@@ -470,7 +894,7 @@ function SwipeView({ activeTab, tabs }) {
   const [prevTab, setPrevTab] = useState(activeTab);
   const [animating, setAnimating] = useState(false);
   const [direction, setDirection] = useState(0);
-  const tabOrder = ["chat", "quiz", "planner"];
+  const tabOrder = ["chat", "quiz", "planner", "chart"];
   useEffect(() => {
     if (activeTab !== prevTab) {
       const from = tabOrder.indexOf(prevTab),
@@ -984,7 +1408,7 @@ function QuizScreen({ exam, API_URL }) {
           topic,
           exam,
           count,
-          userId: USER_ID,
+          userId: getUserId(),
           ...(exam === "State PCS" && selectedState
             ? { state: selectedState }
             : {}),
@@ -1041,7 +1465,7 @@ function QuizScreen({ exam, API_URL }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: USER_ID,
+          userId: getUserId(),
           topic,
           exam,
           score: finalScore,
@@ -1058,7 +1482,7 @@ function QuizScreen({ exam, API_URL }) {
     setLoadingHistory(true);
     setScreen("history");
     try {
-      const res = await fetch(`${API_URL}/quiz/history/${USER_ID}`);
+      const res = await fetch(`${API_URL}/quiz/history/${getUserId()}`);
       setHistory(await res.json());
     } catch (e) {}
     setLoadingHistory(false);
@@ -1882,7 +2306,7 @@ function PlannerScreen({ exam, API_URL }) {
 
   const loadSavedPlans = async () => {
     try {
-      const res = await fetch(`${API_URL}/planner/${USER_ID}`);
+      const res = await fetch(`${API_URL}/planner/${getUserId()}`);
       const data = await res.json();
       setSavedPlans(Array.isArray(data) ? data : []);
     } catch (e) {}
@@ -1905,7 +2329,7 @@ function PlannerScreen({ exam, API_URL }) {
           examDate,
           topics: topics.trim() || null,
           hoursPerDay,
-          userId: USER_ID,
+          userId: getUserId(),
         }),
       });
       const data = await res.json();
@@ -1940,7 +2364,7 @@ function PlannerScreen({ exam, API_URL }) {
 
   const deletePlan = async (plannerId) => {
     try {
-      await fetch(`${API_URL}/planner/${USER_ID}/${plannerId}`, {
+      await fetch(`${API_URL}/planner/${getUserId()}/${plannerId}`, {
         method: "DELETE",
       });
       loadSavedPlans();
@@ -2781,7 +3205,7 @@ function PlannerScreen({ exam, API_URL }) {
 }
 
 // ── CHAT SCREEN ───────────────────────────────────────────────────────────────
-function ChatScreen({ exam, onChangeExam, API_URL }) {
+function ChatScreen({ exam, onChangeExam, API_URL, onSignOut }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2795,8 +3219,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   const [currentChatId, setCurrentChatId] = useState(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [loadingChats, setLoadingChats] = useState(false);
-
-  // ── NEW: pending file states ──
   const [pendingFile, setPendingFile] = useState(null);
   const [filePrompt, setFilePrompt] = useState("");
 
@@ -2842,7 +3264,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   const loadChatList = async () => {
     setLoadingChats(true);
     try {
-      const res = await fetch(`${API_URL}/chats/${USER_ID}`);
+      const res = await fetch(`${API_URL}/chats/${getUserId()}`);
       setChatList(await res.json());
     } catch (e) {}
     setLoadingChats(false);
@@ -2850,7 +3272,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
 
   const createNewChat = async (examType = exam) => {
     try {
-      const res = await fetch(`${API_URL}/chats/${USER_ID}`, {
+      const res = await fetch(`${API_URL}/chats/${getUserId()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ exam: examType }),
@@ -2869,7 +3291,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
 
   const loadChat = async (chatId) => {
     try {
-      const res = await fetch(`${API_URL}/chats/${USER_ID}/${chatId}`);
+      const res = await fetch(`${API_URL}/chats/${getUserId()}/${chatId}`);
       const data = await res.json();
       setCurrentChatId(chatId);
       setMessages(data.messages || []);
@@ -2882,7 +3304,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   const deleteChat = async (chatId, e) => {
     e.stopPropagation();
     try {
-      await fetch(`${API_URL}/chats/${USER_ID}/${chatId}`, {
+      await fetch(`${API_URL}/chats/${getUserId()}/${chatId}`, {
         method: "DELETE",
       });
       if (currentChatId === chatId) {
@@ -2929,7 +3351,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
           question: text,
           exam,
           history,
-          userId: USER_ID,
+          userId: getUserId(),
           chatId: activeChatId,
         }),
       });
@@ -2957,25 +3379,21 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     await sendMessageWithText(input.trim(), false);
   };
 
-  // ── CHANGE 1: just store the file, show preview + prompt box ──
   const handleFileUpload = (file) => {
     if (!file || loading) return;
     setPendingFile(file);
     setShowAttachMenu(false);
   };
 
-  // ── CHANGE 2: send file + optional prompt together ──
   const sendFileWithPrompt = async () => {
     if (!pendingFile || loading) return;
     const file = pendingFile;
     const prompt = filePrompt.trim();
     const isPdf = file.type === "application/pdf";
     const imageUrl = isPdf ? null : URL.createObjectURL(file);
-
     setPendingFile(null);
     setFilePrompt("");
     setLoading(true);
-
     let activeChatId = currentChatIdRef.current;
     if (!activeChatId) {
       activeChatId = await createNewChat(exam);
@@ -2984,8 +3402,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         return;
       }
     }
-
-    // ── CHANGE 3: store imageUrl for chat bubble preview ──
     setMessages((p) => [
       ...p,
       {
@@ -2996,14 +3412,12 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       },
       { role: "assistant", content: "" },
     ]);
-
     try {
       const formData = new FormData();
       formData.append("image", file);
       formData.append("exam", exam);
       formData.append("chatId", activeChatId);
       if (prompt) formData.append("prompt", prompt);
-
       const res = await fetch(`${API_URL}/image`, {
         method: "POST",
         body: formData,
@@ -3258,7 +3672,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               strokeLinecap="round"
             >
               <path d="M12 5v14M5 12h14" />
-            </svg>{" "}
+            </svg>
             New Chat
           </button>
         </div>
@@ -3364,6 +3778,36 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               </div>
             ))
           )}
+        </div>
+
+        {/* ── SIGN OUT at bottom of sidebar ── */}
+        <div
+          style={{
+            padding: "10px 12px",
+            borderTop: "1px solid #2a2a2a",
+            flexShrink: 0,
+          }}
+        >
+          <button
+            onClick={onSignOut}
+            style={{
+              width: "100%",
+              padding: "9px 14px",
+              background: "transparent",
+              border: "1px solid #3a3a3a",
+              borderRadius: 9,
+              color: "#666",
+              fontSize: "0.85rem",
+              fontWeight: 500,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              fontFamily: "'Figtree', sans-serif",
+            }}
+          >
+            🚪 Sign Out
+          </button>
         </div>
       </div>
 
@@ -3661,7 +4105,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                         padding: "4px 14px",
                       }}
                     >
-                      {/* ── IMAGE PREVIEW in user bubble ── */}
                       <div
                         style={{
                           background: "#2f2f2f",
@@ -3802,7 +4245,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
             borderTop: isEmpty ? "none" : "1px solid #2a2a2a",
           }}
         >
-          {/* ── FILE PREVIEW + PROMPT BOX ── */}
           {pendingFile && (
             <div
               style={{
@@ -3892,7 +4334,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               </button>
             </div>
           )}
-
           {isListening && (
             <div
               style={{
@@ -3905,7 +4346,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               🎤 Recording... release to send
             </div>
           )}
-
           <div
             style={{
               display: "flex",
@@ -3918,7 +4358,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               transition: "border-color 0.2s",
             }}
           >
-            {/* ── PAPERCLIP ICON (Change 1) ── */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -3952,7 +4391,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
-
             <input
               ref={fileInputRef}
               type="file"
@@ -3984,7 +4422,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 e.target.value = "";
               }}
             />
-
             <button
               onMouseDown={startListening}
               onMouseUp={stopListening}
@@ -4029,7 +4466,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 <line x1="8" y1="23" x2="16" y2="23" />
               </svg>
             </button>
-
             {isSpeaking && (
               <button
                 onClick={stopSpeaking}
@@ -4052,7 +4488,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 </svg>
               </button>
             )}
-
             <textarea
               ref={textareaRef}
               value={input}
@@ -4082,7 +4517,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 fontSize: 16,
               }}
             />
-
             <button
               onClick={sendMessage}
               disabled={loading || !input.trim()}
@@ -4145,80 +4579,14 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       {showAttachMenu && (
         <>
           <style>{`
-      @keyframes attachBackdropIn {
-        from { opacity: 0; }
-        to   { opacity: 1; }
-      }
-      @keyframes attachSheetIn {
-        from { transform: translateY(100%) scale(0.97); opacity: 0; }
-        to   { transform: translateY(0)    scale(1);    opacity: 1; }
-      }
-      @keyframes attachCardIn {
-        from { opacity: 0; transform: translateY(14px) scale(0.95); }
-        to   { opacity: 1; transform: translateY(0)    scale(1);    }
-      }
-      @keyframes shimmer {
-        0%   { background-position: -200% center; }
-        100% { background-position:  200% center; }
-      }
-      .attach-card {
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 10px;
-        padding: 16px 14px 14px;
-        border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.07);
-        background: rgba(255,255,255,0.04);
-        cursor: pointer;
-        transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1),
-                    background 0.18s ease,
-                    border-color 0.18s ease,
-                    box-shadow 0.22s ease;
-        -webkit-tap-highlight-color: transparent;
-        overflow: hidden;
-        backdrop-filter: blur(12px);
-      }
-      .attach-card:active {
-        transform: scale(0.93) !important;
-      }
-      .attach-card::before {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 60%);
-        pointer-events: none;
-      }
-      .attach-card:hover {
-        background: rgba(255,255,255,0.08);
-        border-color: rgba(255,255,255,0.14);
-        box-shadow: 0 8px 32px rgba(0,0,0,0.35);
-        transform: translateY(-2px);
-      }
-      .attach-icon-wrap {
-        width: 42px;
-        height: 42px;
-        border-radius: 13px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        position: relative;
-      }
-      .attach-icon-wrap::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        opacity: 0.35;
-        filter: blur(8px);
-        transform: translateY(4px) scale(0.85);
-      }
-    `}</style>
-
-          {/* Backdrop */}
+            @keyframes attachBackdropIn { from{opacity:0} to{opacity:1} }
+            @keyframes attachSheetIn { from{transform:translateY(100%) scale(0.97);opacity:0} to{transform:translateY(0) scale(1);opacity:1} }
+            @keyframes attachCardIn { from{opacity:0;transform:translateY(14px) scale(0.95)} to{opacity:1;transform:translateY(0) scale(1)} }
+            .attach-card { position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px 14px 14px;border-radius:18px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.04);cursor:pointer;transition:transform 0.22s cubic-bezier(0.34,1.56,0.64,1),background 0.18s ease,border-color 0.18s ease,box-shadow 0.22s ease;-webkit-tap-highlight-color:transparent;overflow:hidden;backdrop-filter:blur(12px); }
+            .attach-card:active { transform:scale(0.93)!important; }
+            .attach-card:hover { background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.14);box-shadow:0 8px 32px rgba(0,0,0,0.35);transform:translateY(-2px); }
+            .attach-icon-wrap { width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+          `}</style>
           <div
             onClick={() => setShowAttachMenu(false)}
             style={{
@@ -4231,8 +4599,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               animation: "attachBackdropIn 0.25s ease both",
             }}
           />
-
-          {/* Sheet */}
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -4241,15 +4607,14 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               left: 0,
               right: 0,
               zIndex: 201,
-              background: "linear-gradient(180deg, #1c1c1e 0%, #141416 100%)",
+              background: "linear-gradient(180deg,#1c1c1e 0%,#141416 100%)",
               borderRadius: "26px 26px 0 0",
               padding: "0 0 calc(28px + env(safe-area-inset-bottom))",
               animation: "attachSheetIn 0.35s cubic-bezier(0.32,0.72,0,1) both",
               boxShadow:
-                "0 -1px 0 rgba(255,255,255,0.07), 0 -24px 60px rgba(0,0,0,0.7)",
+                "0 -1px 0 rgba(255,255,255,0.07),0 -24px 60px rgba(0,0,0,0.7)",
             }}
           >
-            {/* Top handle + header */}
             <div style={{ padding: "12px 20px 18px" }}>
               <div
                 style={{
@@ -4313,8 +4678,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 </button>
               </div>
             </div>
-
-            {/* 3-card grid */}
             <div
               style={{
                 display: "grid",
@@ -4323,179 +4686,116 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 padding: "0 14px",
               }}
             >
-              {/* Take a Photo */}
-              <button
-                className="attach-card"
-                onClick={() => {
-                  cameraInputRef.current.click();
-                  setShowAttachMenu(false);
-                }}
-                style={{
-                  animation:
-                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.05s both",
-                }}
-              >
-                <div
-                  className="attach-icon-wrap"
+              {[
+                {
+                  label: "Camera",
+                  sub: "Take a photo",
+                  icon: (
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
+                    </svg>
+                  ),
+                  bg: "linear-gradient(135deg,#ff6b35,#ff3a6e)",
+                  ref: cameraInputRef,
+                  delay: "0.05s",
+                },
+                {
+                  label: "Gallery",
+                  sub: "Pick image",
+                  icon: (
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="3" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  ),
+                  bg: "linear-gradient(135deg,#7c3aed,#4f46e5)",
+                  ref: fileInputRef,
+                  delay: "0.11s",
+                },
+                {
+                  label: "PDF",
+                  sub: "Upload doc",
+                  icon: (
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                    </svg>
+                  ),
+                  bg: "linear-gradient(135deg,#059669,#10b981)",
+                  ref: pdfInputRef,
+                  delay: "0.17s",
+                },
+              ].map(({ label, sub, icon, bg, ref, delay }) => (
+                <button
+                  key={label}
+                  className="attach-card"
+                  onClick={() => {
+                    ref.current.click();
+                    setShowAttachMenu(false);
+                  }}
                   style={{
-                    background: "linear-gradient(135deg, #ff6b35, #ff3a6e)",
+                    animation: `attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) ${delay} both`,
                   }}
                 >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#fff"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                    <circle cx="12" cy="13" r="4" />
-                  </svg>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      fontWeight: 700,
-                      color: "#fff",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    Camera
+                  <div className="attach-icon-wrap" style={{ background: bg }}>
+                    {icon}
                   </div>
-                  <div
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "#555",
-                      marginTop: 3,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    Take a photo
+                  <div>
+                    <div
+                      style={{
+                        fontSize: "0.8rem",
+                        fontWeight: 700,
+                        color: "#fff",
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {label}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.65rem",
+                        color: "#555",
+                        marginTop: 3,
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {sub}
+                    </div>
                   </div>
-                </div>
-              </button>
-
-              {/* Gallery */}
-              <button
-                className="attach-card"
-                onClick={() => {
-                  fileInputRef.current.click();
-                  setShowAttachMenu(false);
-                }}
-                style={{
-                  animation:
-                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.11s both",
-                }}
-              >
-                <div
-                  className="attach-icon-wrap"
-                  style={{
-                    background: "linear-gradient(135deg, #7c3aed, #4f46e5)",
-                  }}
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#fff"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="3" width="18" height="18" rx="3" />
-                    <circle cx="8.5" cy="8.5" r="1.5" />
-                    <polyline points="21 15 16 10 5 21" />
-                  </svg>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      fontWeight: 700,
-                      color: "#fff",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    Gallery
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "#555",
-                      marginTop: 3,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    Pick image
-                  </div>
-                </div>
-              </button>
-
-              {/* PDF */}
-              <button
-                className="attach-card"
-                onClick={() => {
-                  pdfInputRef.current.click();
-                  setShowAttachMenu(false);
-                }}
-                style={{
-                  animation:
-                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.17s both",
-                }}
-              >
-                <div
-                  className="attach-icon-wrap"
-                  style={{
-                    background: "linear-gradient(135deg, #059669, #10b981)",
-                  }}
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#fff"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" y1="13" x2="8" y2="13" />
-                    <line x1="16" y1="17" x2="8" y2="17" />
-                  </svg>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      fontWeight: 700,
-                      color: "#fff",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    PDF
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "#555",
-                      marginTop: 3,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    Upload doc
-                  </div>
-                </div>
-              </button>
+                </button>
+              ))}
             </div>
-
-            {/* Subtle tip row */}
             <div
               style={{
                 margin: "16px 14px 0",
@@ -4545,6 +4845,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
           </div>
         </>
       )}
+
       {toast && (
         <div
           style={{
@@ -4570,10 +4871,542 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   );
 }
 
+// ── CHART RENDERER ────────────────────────────────────────────────────────────
+function ChartRenderer({ chartData }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !chartData || chartData.type === "text") return;
+    if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+    const COLORS = [
+      "#10a37f",
+      "#3b82f6",
+      "#f59e0b",
+      "#ec4899",
+      "#8b5cf6",
+      "#06b6d4",
+      "#f97316",
+      "#84cc16",
+    ];
+    const datasets = chartData.data.datasets.map((ds, i) => {
+      const color = ds.color || COLORS[i % COLORS.length];
+      const isPie = ["pie", "doughnut"].includes(chartData.chartType);
+      return {
+        label: ds.label,
+        data: ds.data,
+        backgroundColor: isPie
+          ? chartData.data.labels.map(
+              (_, j) => COLORS[j % COLORS.length] + "cc"
+            )
+          : color + "33",
+        borderColor: isPie
+          ? chartData.data.labels.map((_, j) => COLORS[j % COLORS.length])
+          : color,
+        borderWidth: 2,
+        borderRadius: chartData.chartType === "bar" ? 6 : 0,
+        fill: chartData.chartType === "line",
+        tension: 0.4,
+        pointBackgroundColor: color,
+        pointRadius: chartData.chartType === "line" ? 4 : 0,
+        pointHoverRadius: 6,
+      };
+    });
+    const ctx = canvasRef.current.getContext("2d");
+    chartRef.current = new window.Chart(ctx, {
+      type: chartData.chartType,
+      data: { labels: chartData.data.labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 600, easing: "easeInOutQuart" },
+        plugins: {
+          legend: {
+            display:
+              datasets.length > 1 ||
+              ["pie", "doughnut"].includes(chartData.chartType),
+            labels: {
+              color: "#ccc",
+              font: { family: "'Figtree',sans-serif", size: 11 },
+              padding: 14,
+              usePointStyle: true,
+            },
+          },
+          tooltip: {
+            backgroundColor: "#1e1e1e",
+            titleColor: "#fff",
+            bodyColor: "#ccc",
+            borderColor: "#3a3a3a",
+            borderWidth: 1,
+            padding: 10,
+            callbacks: {
+              label: (ctx) =>
+                ` ${ctx.dataset.label || ""}: ${ctx.parsed.y ?? ctx.parsed}`,
+            },
+          },
+        },
+        scales: ["pie", "doughnut"].includes(chartData.chartType)
+          ? {}
+          : {
+              x: {
+                ticks: {
+                  color: "#888",
+                  font: { family: "'Figtree',sans-serif", size: 10 },
+                  maxRotation: 45,
+                },
+                grid: { color: "#2a2a2a" },
+                title: chartData.xAxisLabel
+                  ? {
+                      display: true,
+                      text: chartData.xAxisLabel,
+                      color: "#666",
+                      font: { size: 11 },
+                    }
+                  : { display: false },
+              },
+              y: {
+                ticks: {
+                  color: "#888",
+                  font: { family: "'Figtree',sans-serif", size: 10 },
+                },
+                grid: { color: "#2a2a2a" },
+                title: chartData.yAxisLabel
+                  ? {
+                      display: true,
+                      text: chartData.yAxisLabel,
+                      color: "#666",
+                      font: { size: 11 },
+                    }
+                  : { display: false },
+              },
+            },
+      },
+    });
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
+    };
+  }, [chartData]);
+
+  if (!chartData || chartData.type === "text") return null;
+  return (
+    <div
+      style={{
+        background: "#2a2a2a",
+        borderRadius: 16,
+        padding: "16px",
+        marginBottom: 16,
+        border: "1px solid #3a3a3a",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.92rem",
+          fontWeight: 700,
+          color: "#fff",
+          marginBottom: 4,
+        }}
+      >
+        {chartData.title}
+      </div>
+      <div style={{ height: 280, position: "relative", marginBottom: 12 }}>
+        <canvas ref={canvasRef} />
+      </div>
+      {chartData.description && (
+        <div
+          style={{
+            fontSize: "0.8rem",
+            color: "#999",
+            lineHeight: 1.6,
+            marginBottom: 8,
+            padding: "10px 12px",
+            background: "#10a37f10",
+            borderRadius: 8,
+            border: "1px solid #10a37f20",
+          }}
+        >
+          💡 {chartData.description}
+        </div>
+      )}
+      {chartData.source && (
+        <div style={{ fontSize: "0.7rem", color: "#555", textAlign: "right" }}>
+          Source: {chartData.source}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CHART SCREEN ──────────────────────────────────────────────────────────────
+function ChartScreen({ exam, API_URL }) {
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [chartData, setChartData] = useState(null);
+  const [textAnswer, setTextAnswer] = useState("");
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState([]);
+
+  const SUGGESTIONS = {
+    UPSC: [
+      "India GDP growth rate 2015 to 2023",
+      "Union Budget 2024 sector allocation",
+      "Literacy rate of top 5 Indian states",
+      "India's exports by category 2023",
+      "BRICS countries GDP comparison",
+    ],
+    JEE: [
+      "Velocity time graph for uniform acceleration",
+      "Boyle's law pressure volume relationship",
+      "Projectile motion trajectory",
+      "Radioactive decay curve",
+      "Carnot cycle efficiency vs temperature",
+    ],
+    NEET: [
+      "Human population growth curve",
+      "Enzyme activity vs pH graph",
+      "Logistic vs exponential growth",
+      "Absorption spectrum of chlorophyll",
+      "Blood pressure in different vessels",
+    ],
+    "Current Affairs": [
+      "India inflation rate 2022 to 2024",
+      "Top 5 countries by renewable energy",
+      "India FDI inflows 2020 to 2024",
+      "Global temperature rise 1990 to 2024",
+      "Digital India internet users growth",
+    ],
+    General: [
+      "India GDP growth last 10 years",
+      "Population of G7 countries",
+      "Global CO2 emissions by country",
+      "India's state wise population 2011",
+      "Top 5 economies by GDP 2024",
+    ],
+  };
+  const suggestions = SUGGESTIONS[exam] || SUGGESTIONS["General"];
+
+  const generate = async (q) => {
+    const question = q || query;
+    if (!question.trim()) return;
+    setLoading(true);
+    setError("");
+    setChartData(null);
+    setTextAnswer("");
+    try {
+      const res = await fetch(`${API_URL}/chart/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, exam }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (data.type === "text") {
+        setTextAnswer(data.answer);
+      } else {
+        setChartData(data);
+        setHistory((prev) => [
+          { query: question, chartData: data },
+          ...prev.slice(0, 4),
+        ]);
+      }
+    } catch (err) {
+      setError("Failed to generate chart. Try a different question.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        background: "#212121",
+        color: "#ececec",
+        fontFamily: "'Figtree', sans-serif",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "12px 16px",
+          borderBottom: "1px solid #2a2a2a",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
+          📊 Charts & Graphs
+        </div>
+        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && generate()}
+            placeholder="e.g. India GDP growth 2015 to 2023..."
+            style={{
+              flex: 1,
+              padding: "11px 14px",
+              background: "#2a2a2a",
+              border: "1px solid #3a3a3a",
+              borderRadius: 10,
+              color: "#ececec",
+              fontSize: "0.9rem",
+              outline: "none",
+              fontFamily: "'Figtree', sans-serif",
+            }}
+          />
+          <button
+            onClick={() => generate()}
+            disabled={loading || !query.trim()}
+            style={{
+              padding: "11px 16px",
+              background: loading || !query.trim() ? "#2a2a2a" : "#10a37f",
+              border: "none",
+              borderRadius: 10,
+              color: loading || !query.trim() ? "#555" : "#fff",
+              fontWeight: 600,
+              cursor: loading || !query.trim() ? "not-allowed" : "pointer",
+              fontSize: "0.9rem",
+              flexShrink: 0,
+            }}
+          >
+            {loading ? "..." : "Go"}
+          </button>
+        </div>
+        {!chartData && !textAnswer && !loading && (
+          <>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#555",
+                marginBottom: 10,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}
+            >
+              Try these for {exam}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                marginBottom: 20,
+              }}
+            >
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setQuery(s);
+                    generate(s);
+                  }}
+                  style={{
+                    padding: "11px 14px",
+                    background: "#2a2a2a",
+                    border: "1px solid #333",
+                    borderRadius: 10,
+                    color: "#ddd",
+                    fontSize: "0.85rem",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "'Figtree', sans-serif",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ color: "#10a37f" }}>📈</span> {s}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {loading && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              height: 200,
+              gap: 14,
+            }}
+          >
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                border: "3px solid #2a2a2a",
+                borderTopColor: "#10a37f",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+              }}
+            />
+            <div style={{ color: "#666", fontSize: "0.85rem" }}>
+              Generating chart...
+            </div>
+          </div>
+        )}
+        {error && (
+          <div
+            style={{
+              background: "#e53e3e15",
+              border: "1px solid #e53e3e40",
+              borderRadius: 10,
+              padding: "12px 14px",
+              color: "#e53e3e",
+              fontSize: "0.85rem",
+              marginBottom: 16,
+            }}
+          >
+            {error}
+          </div>
+        )}
+        {chartData && !loading && (
+          <>
+            <ChartRenderer chartData={chartData} />
+            <button
+              onClick={() => {
+                setChartData(null);
+                setQuery("");
+              }}
+              style={{
+                width: "100%",
+                padding: 12,
+                background: "#2a2a2a",
+                border: "1px solid #3a3a3a",
+                borderRadius: 10,
+                color: "#ddd",
+                fontSize: "0.88rem",
+                cursor: "pointer",
+                marginBottom: 20,
+              }}
+            >
+              New Chart
+            </button>
+          </>
+        )}
+        {textAnswer && !loading && (
+          <div
+            style={{
+              background: "#2a2a2a",
+              borderRadius: 12,
+              padding: "14px 16px",
+              marginBottom: 16,
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#10a37f",
+                fontWeight: 700,
+                marginBottom: 8,
+                textTransform: "uppercase",
+                letterSpacing: 0.8,
+              }}
+            >
+              💬 Text Answer
+            </div>
+            <div
+              style={{ fontSize: "0.88rem", color: "#ddd", lineHeight: 1.7 }}
+            >
+              {textAnswer}
+            </div>
+            <button
+              onClick={() => {
+                setTextAnswer("");
+                setQuery("");
+              }}
+              style={{
+                marginTop: 12,
+                padding: "8px 14px",
+                background: "transparent",
+                border: "1px solid #3a3a3a",
+                borderRadius: 8,
+                color: "#888",
+                fontSize: "0.82rem",
+                cursor: "pointer",
+              }}
+            >
+              Try another
+            </button>
+          </div>
+        )}
+        {history.length > 0 && !chartData && !textAnswer && !loading && (
+          <>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#555",
+                marginBottom: 10,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}
+            >
+              Recent
+            </div>
+            {history.map((h, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setChartData(h.chartData);
+                  setQuery(h.query);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  background: "#2a2a2a",
+                  border: "1px solid #333",
+                  borderRadius: 10,
+                  color: "#ddd",
+                  fontSize: "0.85rem",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: "'Figtree', sans-serif",
+                  marginBottom: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <span>📊</span>
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {h.query}
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
+  const [user, setUser] = useState(null);
   const [appState, setAppState] = useState("splash");
-  const [exam, setExam] = useState("");
+  const [exam, setExam] = useState(localStorage.getItem("examai_exam") || "");
   const [activeTab, setActiveTab] = useState("chat");
   const API_URL = import.meta.env.VITE_API_URL;
 
@@ -4604,23 +5437,73 @@ export default function App() {
     select option{background:#2a2a2a;color:#ececec;}
   `;
 
+  // ── AUTH LISTENER ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        localStorage.setItem("examai_userId", firebaseUser.uid);
+        setUser(firebaseUser);
+      } else {
+        setUser(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // ── SPLASH → EXAM SELECT (always) ─────────────────────────────────────────
+  const handleSplashDone = () => {
+    setAppState("exam-select");
+  };
+
+  // ── EXAM SELECTED ──────────────────────────────────────────────────────────
   const handleExamSelect = (e) => {
     localStorage.setItem("examai_exam", e);
     setExam(e);
-    setAppState("main");
+    // Check live Firebase auth, not stale React state
+    const currentUser = getAuth().currentUser;
+    if (currentUser) {
+      setAppState("main");
+    } else {
+      setAppState("login");
+    }
   };
+
   const handleChangeExam = (e) => {
     localStorage.setItem("examai_exam", e);
     setExam(e);
   };
 
+  // ── LOGIN ──────────────────────────────────────────────────────────────────
+  const handleLogin = async () => {
+    const result = await signInWithPopup(auth, provider);
+    const firebaseUser = result.user;
+    const token = await firebaseUser.getIdToken();
+    localStorage.setItem("firebaseToken", token);
+    localStorage.setItem("examai_userId", firebaseUser.uid);
+    setUser(firebaseUser);
+    setAppState("main");
+  };
+  const handleEmailLogin = async (email, password, isSignUp) => {
+    let result;
+    if (isSignUp) {
+      result = await createUserWithEmailAndPassword(auth, email, password);
+    } else {
+      result = await signInWithEmailAndPassword(auth, email, password);
+    }
+    localStorage.setItem("examai_userId", result.user.uid);
+    setUser(result.user);
+    setAppState("main");
+  };
+
+  // ── RENDER ─────────────────────────────────────────────────────────────────
   if (appState === "splash")
     return (
       <>
         <style>{GLOBAL_STYLES}</style>
-        <SplashScreen onDone={() => setAppState("exam-select")} />
+        <SplashScreen onDone={handleSplashDone} />
       </>
     );
+
   if (appState === "exam-select")
     return (
       <>
@@ -4628,6 +5511,18 @@ export default function App() {
         <ExamSelectScreen
           onSelect={handleExamSelect}
           currentExam={exam || null}
+        />
+      </>
+    );
+
+  if (appState === "login")
+    return (
+      <>
+        <style>{GLOBAL_STYLES}</style>
+        <LoginScreen
+          onLogin={handleLogin}
+          onEmailLogin={handleEmailLogin}
+          exam={exam}
         />
       </>
     );
@@ -4689,6 +5584,12 @@ export default function App() {
               exam={exam}
               onChangeExam={handleChangeExam}
               API_URL={API_URL}
+              onSignOut={async () => {
+                await signOut(auth);
+                localStorage.clear();
+                setUser(null);
+                setAppState("login");
+              }}
             />
           ),
           quiz: <QuizScreen exam={exam} API_URL={API_URL} />,
@@ -4697,594 +5598,6 @@ export default function App() {
         }}
       />
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
-    </div>
-  );
-}
-// ── CHART RENDERER COMPONENT ──────────────────────────────────────────────────
-// 1. Add this import at the top of App.jsx:
-//    import { useEffect, useRef, useState } from "react";
-//
-// 2. Add Chart.js CDN in your index.html <head>:
-//    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-//
-// 3. Paste the ChartRenderer component and ChartScreen component below into App.jsx
-//
-// 4. Add "chart" to your tabs in App.jsx:
-//    tabs={{ chat: ..., quiz: ..., planner: ..., chart: <ChartScreen exam={exam} API_URL={API_URL} /> }}
-//
-// 5. Add chart tab to TabBar:
-//    { id: "chart", icon: "📊", label: "Charts" }
-
-// ── CHART RENDERER ────────────────────────────────────────────────────────────
-function ChartRenderer({ chartData }) {
-  const canvasRef = useRef(null);
-  const chartRef = useRef(null);
-
-  useEffect(() => {
-    if (!canvasRef.current || !chartData || chartData.type === "text") return;
-
-    // Destroy existing chart
-    if (chartRef.current) {
-      chartRef.current.destroy();
-      chartRef.current = null;
-    }
-
-    const COLORS = [
-      "#10a37f",
-      "#3b82f6",
-      "#f59e0b",
-      "#ec4899",
-      "#8b5cf6",
-      "#06b6d4",
-      "#f97316",
-      "#84cc16",
-    ];
-
-    const datasets = chartData.data.datasets.map((ds, i) => {
-      const color = ds.color || COLORS[i % COLORS.length];
-      const isPie = ["pie", "doughnut"].includes(chartData.chartType);
-      return {
-        label: ds.label,
-        data: ds.data,
-        backgroundColor: isPie
-          ? chartData.data.labels.map(
-              (_, j) => COLORS[j % COLORS.length] + "cc"
-            )
-          : color + "33",
-        borderColor: isPie
-          ? chartData.data.labels.map((_, j) => COLORS[j % COLORS.length])
-          : color,
-        borderWidth: 2,
-        borderRadius: chartData.chartType === "bar" ? 6 : 0,
-        fill: chartData.chartType === "line",
-        tension: 0.4,
-        pointBackgroundColor: color,
-        pointRadius: chartData.chartType === "line" ? 4 : 0,
-        pointHoverRadius: 6,
-      };
-    });
-
-    const ctx = canvasRef.current.getContext("2d");
-
-    chartRef.current = new window.Chart(ctx, {
-      type: chartData.chartType,
-      data: {
-        labels: chartData.data.labels,
-        datasets,
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 600, easing: "easeInOutQuart" },
-        plugins: {
-          legend: {
-            display:
-              datasets.length > 1 ||
-              ["pie", "doughnut"].includes(chartData.chartType),
-            labels: {
-              color: "#ccc",
-              font: { family: "'Figtree', sans-serif", size: 11 },
-              padding: 14,
-              usePointStyle: true,
-            },
-          },
-          tooltip: {
-            backgroundColor: "#1e1e1e",
-            titleColor: "#fff",
-            bodyColor: "#ccc",
-            borderColor: "#3a3a3a",
-            borderWidth: 1,
-            padding: 10,
-            callbacks: {
-              label: (ctx) =>
-                ` ${ctx.dataset.label || ""}: ${ctx.parsed.y ?? ctx.parsed}`,
-            },
-          },
-        },
-        scales: ["pie", "doughnut"].includes(chartData.chartType)
-          ? {}
-          : {
-              x: {
-                ticks: {
-                  color: "#888",
-                  font: { family: "'Figtree', sans-serif", size: 10 },
-                  maxRotation: 45,
-                },
-                grid: { color: "#2a2a2a" },
-                title: chartData.xAxisLabel
-                  ? {
-                      display: true,
-                      text: chartData.xAxisLabel,
-                      color: "#666",
-                      font: { size: 11 },
-                    }
-                  : { display: false },
-              },
-              y: {
-                ticks: {
-                  color: "#888",
-                  font: { family: "'Figtree', sans-serif", size: 10 },
-                },
-                grid: { color: "#2a2a2a" },
-                title: chartData.yAxisLabel
-                  ? {
-                      display: true,
-                      text: chartData.yAxisLabel,
-                      color: "#666",
-                      font: { size: 11 },
-                    }
-                  : { display: false },
-              },
-            },
-      },
-    });
-
-    return () => {
-      if (chartRef.current) {
-        chartRef.current.destroy();
-        chartRef.current = null;
-      }
-    };
-  }, [chartData]);
-
-  if (!chartData || chartData.type === "text") return null;
-
-  return (
-    <div
-      style={{
-        background: "#2a2a2a",
-        borderRadius: 16,
-        padding: "16px",
-        marginBottom: 16,
-        border: "1px solid #3a3a3a",
-      }}
-    >
-      {/* Chart Title */}
-      <div
-        style={{
-          fontSize: "0.92rem",
-          fontWeight: 700,
-          color: "#fff",
-          marginBottom: 4,
-        }}
-      >
-        {chartData.title}
-      </div>
-
-      {/* Chart Canvas */}
-      <div style={{ height: 280, position: "relative", marginBottom: 12 }}>
-        <canvas ref={canvasRef} />
-      </div>
-
-      {/* Description */}
-      {chartData.description && (
-        <div
-          style={{
-            fontSize: "0.8rem",
-            color: "#999",
-            lineHeight: 1.6,
-            marginBottom: 8,
-            padding: "10px 12px",
-            background: "#10a37f10",
-            borderRadius: 8,
-            border: "1px solid #10a37f20",
-          }}
-        >
-          💡 {chartData.description}
-        </div>
-      )}
-
-      {/* Source */}
-      {chartData.source && (
-        <div style={{ fontSize: "0.7rem", color: "#555", textAlign: "right" }}>
-          Source: {chartData.source}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── CHART SCREEN ──────────────────────────────────────────────────────────────
-function ChartScreen({ exam, API_URL }) {
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [chartData, setChartData] = useState(null);
-  const [textAnswer, setTextAnswer] = useState("");
-  const [error, setError] = useState("");
-  const [history, setHistory] = useState([]);
-
-  const SUGGESTIONS = {
-    UPSC: [
-      "India GDP growth rate 2015 to 2023",
-      "Union Budget 2024 sector allocation",
-      "Literacy rate of top 5 Indian states",
-      "India's exports by category 2023",
-      "BRICS countries GDP comparison",
-    ],
-    JEE: [
-      "Velocity time graph for uniform acceleration",
-      "Boyle's law pressure volume relationship",
-      "Projectile motion trajectory",
-      "Radioactive decay curve",
-      "Carnot cycle efficiency vs temperature",
-    ],
-    NEET: [
-      "Human population growth curve",
-      "Enzyme activity vs pH graph",
-      "Logistic vs exponential growth",
-      "Absorption spectrum of chlorophyll",
-      "Blood pressure in different vessels",
-    ],
-    "Current Affairs": [
-      "India inflation rate 2022 to 2024",
-      "Top 5 countries by renewable energy",
-      "India FDI inflows 2020 to 2024",
-      "Global temperature rise 1990 to 2024",
-      "Digital India internet users growth",
-    ],
-    General: [
-      "India GDP growth last 10 years",
-      "Population of G7 countries",
-      "Global CO2 emissions by country",
-      "India's state wise population 2011",
-      "Top 5 economies by GDP 2024",
-    ],
-  };
-
-  const suggestions = SUGGESTIONS[exam] || SUGGESTIONS["General"];
-
-  const generate = async (q) => {
-    const question = q || query;
-    if (!question.trim()) return;
-    setLoading(true);
-    setError("");
-    setChartData(null);
-    setTextAnswer("");
-
-    try {
-      const res = await fetch(`${API_URL}/chart/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, exam }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      if (data.type === "text") {
-        setTextAnswer(data.answer);
-      } else {
-        setChartData(data);
-        setHistory((prev) => [
-          { query: question, chartData: data },
-          ...prev.slice(0, 4),
-        ]);
-      }
-    } catch (err) {
-      setError("Failed to generate chart. Try a different question.");
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        background: "#212121",
-        color: "#ececec",
-        fontFamily: "'Figtree', sans-serif",
-        overflow: "hidden",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "12px 16px",
-          borderBottom: "1px solid #2a2a2a",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
-          📊 Charts & Graphs
-        </div>
-        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
-      </div>
-
-      {/* Scrollable Content */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
-        {/* Search Box */}
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: 16,
-          }}
-        >
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && generate()}
-            placeholder="e.g. India GDP growth 2015 to 2023..."
-            style={{
-              flex: 1,
-              padding: "11px 14px",
-              background: "#2a2a2a",
-              border: "1px solid #3a3a3a",
-              borderRadius: 10,
-              color: "#ececec",
-              fontSize: "0.9rem",
-              outline: "none",
-              fontFamily: "'Figtree', sans-serif",
-            }}
-          />
-          <button
-            onClick={() => generate()}
-            disabled={loading || !query.trim()}
-            style={{
-              padding: "11px 16px",
-              background: loading || !query.trim() ? "#2a2a2a" : "#10a37f",
-              border: "none",
-              borderRadius: 10,
-              color: loading || !query.trim() ? "#555" : "#fff",
-              fontWeight: 600,
-              cursor: loading || !query.trim() ? "not-allowed" : "pointer",
-              fontSize: "0.9rem",
-              flexShrink: 0,
-            }}
-          >
-            {loading ? "..." : "Go"}
-          </button>
-        </div>
-
-        {/* Suggestions */}
-        {!chartData && !textAnswer && !loading && (
-          <>
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "#555",
-                marginBottom: 10,
-                fontWeight: 600,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-              }}
-            >
-              Try these for {exam}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                marginBottom: 20,
-              }}
-            >
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setQuery(s);
-                    generate(s);
-                  }}
-                  style={{
-                    padding: "11px 14px",
-                    background: "#2a2a2a",
-                    border: "1px solid #333",
-                    borderRadius: 10,
-                    color: "#ddd",
-                    fontSize: "0.85rem",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontFamily: "'Figtree', sans-serif",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ color: "#10a37f" }}>📈</span> {s}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Loading */}
-        {loading && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: 200,
-              gap: 14,
-            }}
-          >
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                border: "3px solid #2a2a2a",
-                borderTopColor: "#10a37f",
-                borderRadius: "50%",
-                animation: "spin 0.8s linear infinite",
-              }}
-            />
-            <div style={{ color: "#666", fontSize: "0.85rem" }}>
-              Generating chart...
-            </div>
-          </div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div
-            style={{
-              background: "#e53e3e15",
-              border: "1px solid #e53e3e40",
-              borderRadius: 10,
-              padding: "12px 14px",
-              color: "#e53e3e",
-              fontSize: "0.85rem",
-              marginBottom: 16,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {/* Chart Result */}
-        {chartData && !loading && (
-          <>
-            <ChartRenderer chartData={chartData} />
-            <button
-              onClick={() => {
-                setChartData(null);
-                setQuery("");
-              }}
-              style={{
-                width: "100%",
-                padding: 12,
-                background: "#2a2a2a",
-                border: "1px solid #3a3a3a",
-                borderRadius: 10,
-                color: "#ddd",
-                fontSize: "0.88rem",
-                cursor: "pointer",
-                marginBottom: 20,
-              }}
-            >
-              New Chart
-            </button>
-          </>
-        )}
-
-        {/* Text Answer (when chart not applicable) */}
-        {textAnswer && !loading && (
-          <div
-            style={{
-              background: "#2a2a2a",
-              borderRadius: 12,
-              padding: "14px 16px",
-              marginBottom: 16,
-            }}
-          >
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "#10a37f",
-                fontWeight: 700,
-                marginBottom: 8,
-                textTransform: "uppercase",
-                letterSpacing: 0.8,
-              }}
-            >
-              💬 Text Answer
-            </div>
-            <div
-              style={{ fontSize: "0.88rem", color: "#ddd", lineHeight: 1.7 }}
-            >
-              {textAnswer}
-            </div>
-            <button
-              onClick={() => {
-                setTextAnswer("");
-                setQuery("");
-              }}
-              style={{
-                marginTop: 12,
-                padding: "8px 14px",
-                background: "transparent",
-                border: "1px solid #3a3a3a",
-                borderRadius: 8,
-                color: "#888",
-                fontSize: "0.82rem",
-                cursor: "pointer",
-              }}
-            >
-              Try another
-            </button>
-          </div>
-        )}
-
-        {/* Recent Charts History */}
-        {history.length > 0 && !chartData && !textAnswer && !loading && (
-          <>
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "#555",
-                marginBottom: 10,
-                fontWeight: 600,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-              }}
-            >
-              Recent
-            </div>
-            {history.map((h, i) => (
-              <button
-                key={i}
-                onClick={() => {
-                  setChartData(h.chartData);
-                  setQuery(h.query);
-                }}
-                style={{
-                  width: "100%",
-                  padding: "10px 14px",
-                  background: "#2a2a2a",
-                  border: "1px solid #333",
-                  borderRadius: 10,
-                  color: "#ddd",
-                  fontSize: "0.85rem",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontFamily: "'Figtree', sans-serif",
-                  marginBottom: 8,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <span>📊</span>
-                <span
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {h.query}
-                </span>
-              </button>
-            ))}
-          </>
-        )}
-      </div>
     </div>
   );
 }
