@@ -271,6 +271,7 @@ function ExamSelectScreen({ onSelect, currentExam }) {
         alignItems: "center",
         fontFamily: "'Figtree', sans-serif",
         overflowY: "auto",
+        overflowX: "hidden",
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
         opacity: leaving ? 0 : 1,
@@ -280,6 +281,7 @@ function ExamSelectScreen({ onSelect, currentExam }) {
     >
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
+        html, body { overflow-x: hidden; overscroll-behavior: none; }
         @keyframes examCardIn{from{opacity:0;transform:translateY(24px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes examTitleIn{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
         @keyframes glowPulse{0%,100%{opacity:0.4}50%{opacity:0.7}}
