@@ -14,6 +14,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "909950827508-2p043sngf5l23p3da128ksneflurn0b4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "jeanix.in",
+            "certificate_hash": "34750adad808ba639438ca39c585dee26720d074"
+          }
+        },
+        {
+          "client_id": "909950827508-ufksk6puhs84h81hkojq3qtdadhr7bku.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "jeanix.in",
+            "certificate_hash": "93349922c69531cec08d0115415f0a6187d09e4a"
+          }
+        },
+        {
           "client_id": "909950827508-kobcljq1vgv97opvfvia8il6h8r811tl.apps.googleusercontent.com",
           "client_type": 3
         }

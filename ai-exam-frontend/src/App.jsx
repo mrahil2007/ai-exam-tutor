@@ -1,17 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { auth } from "./firebase";
+import { GoogleAuth } from "@codetrix-studio/capacitor-google-auth";
+import { Capacitor } from "@capacitor/core";
 
 import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
   GoogleAuthProvider,
+  signInWithCredential,
   signInWithPopup,
-  onAuthStateChanged,
-  signInWithRedirect,
-  getRedirectResult,
-  getAuth,
-  signOut,
 } from "firebase/auth";
 
 const provider = new GoogleAuthProvider();
@@ -5680,15 +5676,6 @@ export default function App() {
   // ── AUTH LISTENER ──────────────────────────────────────────────────────────
   useEffect(() => {
     // Handle redirect result on Android
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result?.user) {
-          localStorage.setItem("examai_userId", result.user.uid);
-          setUser(result.user);
-          setAppState("main");
-        }
-      })
-      .catch(() => {});
 
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
@@ -5728,15 +5715,20 @@ export default function App() {
   const isAndroid = /android/i.test(navigator.userAgent);
 
   const handleLogin = async () => {
-    if (isAndroid) {
-      // Android WebView can't do popups — use redirect
-      await signInWithRedirect(auth, provider);
-      // Result is handled in useEffect below
+    if (Capacitor.isNativePlatform()) {
+      await GoogleAuth.initialize();
+      const googleUser = await GoogleAuth.signIn();
+      const credential = GoogleAuthProvider.credential(
+        googleUser.authentication.idToken
+      );
+      const result = await signInWithCredential(auth, credential);
+      localStorage.setItem("examai_userId", result.user.uid);
+      setUser(result.user);
+      setAppState("main");
     } else {
       const result = await signInWithPopup(auth, provider);
-      const firebaseUser = result.user;
-      localStorage.setItem("examai_userId", firebaseUser.uid);
-      setUser(firebaseUser);
+      localStorage.setItem("examai_userId", result.user.uid);
+      setUser(result.user);
       setAppState("main");
     }
   };

@@ -13,6 +13,7 @@
     "@capacitor/android": "^8.0.2",
     "@capacitor/cli": "^8.0.2",
     "@capacitor/core": "^8.0.2",
+    "@codetrix-studio/capacitor-google-auth": "^3.4.0-rc.4",
     "@vercel/analytics": "^1.6.1",
     "firebase": "^12.10.0",
     "react": "^19.2.0",
