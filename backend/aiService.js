@@ -389,3 +389,126 @@ If it contains notes or diagrams, explain the key concepts clearly.`,
 
   throw new Error("Could not process file. Please try again.");
 };
+
+// ── AGENT FUNCTION (Gemini Function Calling) ──────────────────────────────────
+// Replaces keyword/regex routing. Gemini decides which tool to use.
+
+const AGENT_TOOLS = [
+  {
+    name: "web_search",
+    description:
+      "Search the web for current events, news, recent appointments, results, notifications, policies, or anything time-sensitive.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The optimized search query" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "world_bank",
+    description:
+      "Fetch official economic/development data: GDP, inflation, population, literacy rate, unemployment, poverty, life expectancy, trade stats for any country.",
+    parameters: {
+      type: "object",
+      properties: {
+        country_code: {
+          type: "string",
+          description: "ISO 2-letter country code e.g. IN, US, CN",
+        },
+        indicator: {
+          type: "string",
+          enum: [
+            "GDP",
+            "INFLATION",
+            "POPULATION",
+            "LITERACY",
+            "UNEMPLOYMENT",
+            "POVERTY",
+            "LIFE_EXPECTANCY",
+            "EXPORTS",
+            "IMPORTS",
+          ],
+          description: "The economic indicator to fetch",
+        },
+      },
+      required: ["country_code", "indicator"],
+    },
+  },
+  {
+    name: "direct_answer",
+    description:
+      "Answer directly from knowledge — for conceptual, syllabus-based, historical, or definition questions that don't need live data.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "Why no tool is needed" },
+      },
+      required: ["reason"],
+    },
+  },
+];
+
+export const askAIAgent = async (question, exam = "General") => {
+  if (!GEMINI_KEYS.length) {
+    // No Gemini keys — skip agent, use direct answer
+    return { action: "direct" };
+  }
+
+  const key = getNextGeminiKey();
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [
+              {
+                text: `You are a routing agent for an exam preparation app (${exam}).
+Your ONLY job is to decide which tool to use for the user's question.
+- Use 'web_search' for anything time-sensitive, current, or recent
+- Use 'world_bank' for economic statistics and development indicators
+- Use 'direct_answer' for concepts, theory, history, definitions, exam syllabus
+Do NOT answer the question yourself. Just pick the right tool.`,
+              },
+            ],
+          },
+          contents: [{ role: "user", parts: [{ text: question }] }],
+          tools: [{ function_declarations: AGENT_TOOLS }],
+          tool_config: { function_calling_config: { mode: "ANY" } },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
+        }),
+      }
+    );
+
+    if (!response.ok) return { action: "direct" };
+
+    const data = await response.json();
+    const part = data.candidates?.[0]?.content?.parts?.[0];
+
+    if (!part?.functionCall) return { action: "direct" };
+
+    const { name, args } = part.functionCall;
+
+    if (name === "web_search")
+      return { action: "web_search", query: args.query };
+    if (name === "world_bank")
+      return {
+        action: "world_bank",
+        country_code: args.country_code,
+        indicator: args.indicator,
+      };
+    return { action: "direct" };
+  } catch (err) {
+    console.warn(
+      "⚠️ Agent routing failed:",
+      err.message,
+      "→ defaulting to direct answer"
+    );
+    return { action: "direct" };
+  }
+};

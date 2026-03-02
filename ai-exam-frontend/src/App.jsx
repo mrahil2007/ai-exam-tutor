@@ -671,9 +671,24 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
 }
 
 // ── EXAM SELECT SCREEN ────────────────────────────────────────────────────────
+// ── EXAM SELECT SCREEN (with Disclaimer Modal) ────────────────────────────────
+// Drop-in replacement for your existing ExamSelectScreen function in App.jsx
+
 function ExamSelectScreen({ onSelect, currentExam }) {
   const [selected, setSelected] = useState(currentExam || null);
   const [leaving, setLeaving] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(
+    () => !localStorage.getItem("examai_disclaimer_accepted")
+  );
+  const [disclaimerOut, setDisclaimerOut] = useState(false);
+
+  const acceptDisclaimer = () => {
+    setDisclaimerOut(true);
+    setTimeout(() => {
+      localStorage.setItem("examai_disclaimer_accepted", "true");
+      setShowDisclaimer(false);
+    }, 350);
+  };
 
   const handleSelect = (e) => {
     setSelected(e);
@@ -707,9 +722,16 @@ function ExamSelectScreen({ onSelect, currentExam }) {
         @keyframes examCardIn{from{opacity:0;transform:translateY(24px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes examTitleIn{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
         @keyframes glowPulse{0%,100%{opacity:0.4}50%{opacity:0.7}}
+        @keyframes discBackdropIn{from{opacity:0}to{opacity:1}}
+        @keyframes discBackdropOut{from{opacity:1}to{opacity:0}}
+        @keyframes discCardIn{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
+        @keyframes discCardOut{from{transform:translateY(0);opacity:1}to{transform:translateY(30px);opacity:0}}
+        @keyframes discDotPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(0.8)}}
         .exam-card-btn{transition:all 0.2s cubic-bezier(0.34,1.56,0.64,1);position:relative;}
         .exam-card-btn:active{transform:scale(0.92)!important;}
       `}</style>
+
+      {/* Background glows */}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none" }}>
         <div
           style={{
@@ -738,6 +760,8 @@ function ExamSelectScreen({ onSelect, currentExam }) {
           }}
         />
       </div>
+
+      {/* Exam grid */}
       <div
         style={{
           width: "100%",
@@ -785,6 +809,7 @@ function ExamSelectScreen({ onSelect, currentExam }) {
               : "Select your target exam to begin"}
           </div>
         </div>
+
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
         >
@@ -863,6 +888,7 @@ function ExamSelectScreen({ onSelect, currentExam }) {
             );
           })}
         </div>
+
         {currentExam && (
           <button
             onClick={() => handleSelect(currentExam)}
@@ -885,6 +911,218 @@ function ExamSelectScreen({ onSelect, currentExam }) {
           </button>
         )}
       </div>
+
+      {/* ── DISCLAIMER MODAL ── */}
+      {showDisclaimer && (
+        <>
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 999,
+              background: "rgba(0,0,0,0.85)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+              animation: `${
+                disclaimerOut ? "discBackdropOut" : "discBackdropIn"
+              } 0.35s ease forwards`,
+            }}
+          >
+            <div
+              style={{
+                background: "#111514",
+                border: "1px solid rgba(16,163,127,0.2)",
+                borderRadius: "24px 24px 0 0",
+                width: "100%",
+                maxWidth: 520,
+                padding: "28px 24px calc(32px + env(safe-area-inset-bottom))",
+                boxShadow:
+                  "0 -24px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(16,163,127,0.06)",
+                animation: `${
+                  disclaimerOut ? "discCardOut" : "discCardIn"
+                } 0.4s cubic-bezier(0.34,1.4,0.64,1) forwards`,
+              }}
+            >
+              {/* Drag handle */}
+              <div
+                style={{
+                  width: 36,
+                  height: 4,
+                  borderRadius: 2,
+                  background: "rgba(255,255,255,0.12)",
+                  margin: "0 auto 22px",
+                }}
+              />
+
+              {/* Badge */}
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  background: "rgba(16,163,127,0.1)",
+                  border: "1px solid rgba(16,163,127,0.2)",
+                  borderRadius: 999,
+                  padding: "4px 12px 4px 8px",
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: "#10a37f",
+                    boxShadow: "0 0 8px rgba(16,163,127,0.8)",
+                    animation: "discDotPulse 2s ease infinite",
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "#10a37f",
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Independent App
+                </span>
+              </div>
+
+              {/* Title */}
+              <div
+                style={{
+                  fontSize: "1.25rem",
+                  fontWeight: 700,
+                  color: "#f0f0ef",
+                  marginBottom: 6,
+                  letterSpacing: -0.3,
+                }}
+              >
+                Before you begin 👋
+              </div>
+
+              {/* Body */}
+              <p
+                style={{
+                  fontSize: "0.88rem",
+                  color: "rgba(255,255,255,0.6)",
+                  lineHeight: 1.7,
+                  marginBottom: 14,
+                  fontWeight: 300,
+                }}
+              >
+                ExamAI is an{" "}
+                <span style={{ color: "#f0f0ef", fontWeight: 500 }}>
+                  independent AI-powered study assistant
+                </span>{" "}
+                and is{" "}
+                <span style={{ color: "#f0f0ef", fontWeight: 500 }}>
+                  not affiliated with, endorsed by, or representing any
+                  government entity
+                </span>{" "}
+                or official examination body.
+              </p>
+
+              <p
+                style={{
+                  fontSize: "0.85rem",
+                  color: "rgba(255,255,255,0.4)",
+                  lineHeight: 1.7,
+                  marginBottom: 20,
+                  fontWeight: 300,
+                }}
+              >
+                All exam content is sourced from publicly available official
+                websites for educational purposes only.
+              </p>
+
+              {/* Source tags */}
+              <div
+                style={{
+                  background: "rgba(16,163,127,0.05)",
+                  border: "1px solid rgba(16,163,127,0.12)",
+                  borderRadius: 10,
+                  padding: "12px 14px",
+                  marginBottom: 22,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: "#10a37f",
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    marginBottom: 8,
+                  }}
+                >
+                  Official Sources Used
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {[
+                    "upsc.gov.in",
+                    "ssc.nic.in",
+                    "ncert.nic.in",
+                    "nta.ac.in",
+                    "ibps.in",
+                    "pib.gov.in",
+                  ].map((src) => (
+                    <span
+                      key={src}
+                      style={{
+                        fontSize: 11,
+                        color: "rgba(255,255,255,0.4)",
+                        background: "rgba(255,255,255,0.05)",
+                        borderRadius: 5,
+                        padding: "3px 8px",
+                      }}
+                    >
+                      {src}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* CTA */}
+              <button
+                onClick={acceptDisclaimer}
+                style={{
+                  width: "100%",
+                  padding: "15px",
+                  background: "linear-gradient(135deg,#10a37f,#0d8a6b)",
+                  border: "none",
+                  borderRadius: 14,
+                  color: "#fff",
+                  fontSize: "0.95rem",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  letterSpacing: 0.1,
+                  boxShadow: "0 4px 20px rgba(16,163,127,0.35)",
+                  fontFamily: "'Figtree', sans-serif",
+                }}
+              >
+                I Understand — Let's Start Studying
+              </button>
+
+              <div
+                style={{
+                  textAlign: "center",
+                  marginTop: 12,
+                  fontSize: 11,
+                  color: "rgba(255,255,255,0.15)",
+                }}
+              >
+                This message will not appear again
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

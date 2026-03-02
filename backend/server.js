@@ -5,7 +5,7 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import { extractText } from "unpdf";
-import { askAI, askAIWithImage } from "./aiService.js";
+import { askAI, askAIWithImage, askAIAgent } from "./aiService.js";
 import Groq from "groq-sdk";
 import { MongoClient, ObjectId } from "mongodb";
 
@@ -177,6 +177,41 @@ Source: ${r.link}`;
     return formatted;
   } catch (err) {
     console.error("Serper error:", err.message);
+    return "";
+  }
+};
+// ── WORLD BANK DATA FETCHER ───────────────────────────────────────────────────
+const WORLD_BANK_INDICATORS = {
+  GDP: "NY.GDP.MKTP.CD",
+  INFLATION: "FP.CPI.TOTL.ZG",
+  POPULATION: "SP.POP.TOTL",
+  LITERACY: "SE.ADT.LITR.ZS",
+  UNEMPLOYMENT: "SL.UEM.TOTL.ZS",
+  POVERTY: "SI.POV.DDAY",
+  LIFE_EXPECTANCY: "SP.DYN.LE00.IN",
+  EXPORTS: "NE.EXP.GNFS.CD",
+  IMPORTS: "NE.IMP.GNFS.CD",
+};
+
+const fetchWorldBankData = async (countryCode, indicator) => {
+  try {
+    const indicatorCode = WORLD_BANK_INDICATORS[indicator];
+    if (!indicatorCode) return "";
+
+    const url = `https://api.worldbank.org/v2/country/${countryCode}/indicator/${indicatorCode}?format=json&mrv=3`;
+    const response = await fetch(url);
+    if (!response.ok) return "";
+
+    const data = await response.json();
+    const records = data?.[1]?.filter((r) => r.value !== null);
+    if (!records?.length) return "";
+
+    const lines = records
+      .map((r) => `  • ${r.date}: ${Number(r.value).toLocaleString()}`)
+      .join("\n");
+    return `WORLD BANK DATA (${indicator} — ${countryCode}):\n${lines}\nSource: World Bank Open Data`;
+  } catch (err) {
+    console.warn("⚠️ World Bank fetch failed:", err.message);
     return "";
   }
 };
@@ -463,50 +498,40 @@ app.post("/chat", async (req, res) => {
   try {
     let finalPrompt = question;
 
-    // 🔎 Detect dynamic factual queries
-    const isDynamicQuery =
-      /who is|current|latest|today|president|prime minister|chief justice|governor|cm|notification|vacancy|result|scheme|policy|judgment|released|announced/i.test(
-        question.toLowerCase()
-      );
+    // 🤖 LLM Agent decides which tool to use (replaces keyword routing)
+    const decision = await askAIAgent(question, exam);
+    console.log(
+      `🤖 Agent decision: ${decision.action}`,
+      decision.query || decision.indicator || ""
+    );
 
-    if (isDynamicQuery) {
-      let searchQuery = question;
-
-      // 🔎 Detect role-based questions
-      const isRoleQuery =
-        /who is.*(president|prime minister|chief justice|governor|cm|minister)/i.test(
-          question
-        );
-
-      // 🔎 Detect exam-related official queries
-      const isExamQuery =
-        /notification|vacancy|result|cutoff|syllabus|scheme|policy|judgment|bill|act/i.test(
-          question
-        );
-
-      if (isRoleQuery) {
-        searchQuery = `current ${question} 2026 site:wikipedia.org OR site:gov`;
-      }
-
-      if (isExamQuery) {
-        searchQuery = `${question} official notification site:gov.in OR site:upsc.gov.in OR site:psc OR site:gov`;
-      }
-
-      const searchContext = await fetchLiveSearchContext(searchQuery);
-
+    if (decision.action === "web_search") {
+      const searchContext = await fetchLiveSearchContext(decision.query);
       if (searchContext) {
-        finalPrompt = `
-${searchContext}
+        finalPrompt = `${searchContext}
 
 You are an AI assistant for competitive exams (UPSC, PCS, SSC, Banking, JEE, NEET).
 Use the live search results above as PRIMARY source.
 Prefer official government sources and authoritative references.
 Answer in concise, exam-relevant format.
 
-Question: ${question}
-`;
+Question: ${question}`;
+      }
+    } else if (decision.action === "world_bank") {
+      const wbData = await fetchWorldBankData(
+        decision.country_code,
+        decision.indicator
+      );
+      if (wbData) {
+        finalPrompt = `${wbData}
+
+Use the World Bank data above as your PRIMARY source for all numbers.
+Answer in a clear, exam-relevant format with the latest available figures.
+
+Question: ${question}`;
       }
     }
+    // decision.action === "direct" → finalPrompt stays as question, no API call needed
 
     const answer = await askAI(finalPrompt, exam, history, false);
 
