@@ -8,6 +8,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   onAuthStateChanged,
+  signInWithRedirect,
+  getRedirectResult,
   getAuth,
   signOut,
 } from "firebase/auth";
@@ -5677,6 +5679,17 @@ export default function App() {
 
   // ── AUTH LISTENER ──────────────────────────────────────────────────────────
   useEffect(() => {
+    // Handle redirect result on Android
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          localStorage.setItem("examai_userId", result.user.uid);
+          setUser(result.user);
+          setAppState("main");
+        }
+      })
+      .catch(() => {});
+
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         localStorage.setItem("examai_userId", firebaseUser.uid);
@@ -5712,14 +5725,20 @@ export default function App() {
   };
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
+  const isAndroid = /android/i.test(navigator.userAgent);
+
   const handleLogin = async () => {
-    const result = await signInWithPopup(auth, provider);
-    const firebaseUser = result.user;
-    const token = await firebaseUser.getIdToken();
-    localStorage.setItem("firebaseToken", token);
-    localStorage.setItem("examai_userId", firebaseUser.uid);
-    setUser(firebaseUser);
-    setAppState("main");
+    if (isAndroid) {
+      // Android WebView can't do popups — use redirect
+      await signInWithRedirect(auth, provider);
+      // Result is handled in useEffect below
+    } else {
+      const result = await signInWithPopup(auth, provider);
+      const firebaseUser = result.user;
+      localStorage.setItem("examai_userId", firebaseUser.uid);
+      setUser(firebaseUser);
+      setAppState("main");
+    }
   };
   const handleEmailLogin = async (email, password, isSignUp) => {
     let result;
