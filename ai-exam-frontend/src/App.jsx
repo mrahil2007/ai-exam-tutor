@@ -261,28 +261,13 @@ function SplashScreen({ onDone }) {
 }
 
 // ── LOGIN SCREEN ──────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin, onEmailLogin, exam }) {
-  const [loading, setLoading] = useState(false);
+function LoginScreen({ onEmailLogin, exam }) {
   const [emailLoading, setEmailLoading] = useState(false);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const meta = EXAM_META[exam] || { icon: "🎓", color: "#10a37f" };
-
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      await onLogin();
-    } catch (e) {
-      console.error("FULL ERROR:", e);
-      alert(JSON.stringify(e));
-      setError(JSON.stringify(e));
-      setLoading(false);
-    }
-  };
 
   const handleEmailLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -339,7 +324,6 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
         .login-input:focus { border-color: ${meta.color} !important; }
       `}</style>
 
-      {/* background glow */}
       <div
         style={{
           position: "fixed",
@@ -438,7 +422,7 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
           {isSignUp ? "Create your account" : "Sign in to continue"}
         </div>
 
-        {/* Toggle Sign In / Sign Up */}
+        {/* Toggle */}
         <div
           style={{
             display: "flex",
@@ -476,7 +460,7 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
           ))}
         </div>
 
-        {/* Email Input */}
+        {/* Email */}
         <div style={{ width: "100%", marginBottom: 10 }}>
           <input
             className="login-input"
@@ -500,8 +484,8 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
           />
         </div>
 
-        {/* Password Input */}
-        <div style={{ width: "100%", marginBottom: 16 }}>
+        {/* Password */}
+        <div style={{ width: "100%", marginBottom: 20 }}>
           <input
             className="login-input"
             type="password"
@@ -524,7 +508,7 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
           />
         </div>
 
-        {/* Email Login Button */}
+        {/* Submit Button */}
         <button
           className="login-btn"
           onClick={handleEmailLogin}
@@ -541,7 +525,6 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
             justifyContent: "center",
             gap: 10,
             opacity: emailLoading ? 0.7 : 1,
-            marginBottom: 12,
             boxShadow: `0 4px 24px ${meta.color}40`,
           }}
         >
@@ -560,83 +543,8 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
             <span
               style={{ fontSize: "0.95rem", fontWeight: 700, color: "#fff" }}
             >
-              {isSignUp ? "Create Account" : "Sign In with Email"}
+              {isSignUp ? "Create Account" : "Sign In"}
             </span>
-          )}
-        </button>
-
-        {/* Divider */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            width: "100%",
-            marginBottom: 12,
-          }}
-        >
-          <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
-          <span style={{ fontSize: "0.72rem", color: "#444" }}>or</span>
-          <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
-        </div>
-
-        {/* Google Button */}
-        <button
-          className="login-btn"
-          onClick={handleGoogleLogin}
-          disabled={loading}
-          style={{
-            width: "100%",
-            padding: "14px 20px",
-            borderRadius: 14,
-            background: "#1a1a1a",
-            border: "1px solid #333",
-            cursor: loading ? "not-allowed" : "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 12,
-            opacity: loading ? 0.6 : 1,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.4)",
-          }}
-        >
-          {loading ? (
-            <div
-              style={{
-                width: 20,
-                height: 20,
-                border: "2px solid #333",
-                borderTopColor: meta.color,
-                borderRadius: "50%",
-                animation: "spin 0.7s linear infinite",
-              }}
-            />
-          ) : (
-            <>
-              <svg width="20" height="20" viewBox="0 0 24 24">
-                <path
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  fill="#4285F4"
-                />
-                <path
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  fill="#34A853"
-                />
-                <path
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
-                  fill="#FBBC05"
-                />
-                <path
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  fill="#EA4335"
-                />
-              </svg>
-              <span
-                style={{ fontSize: "0.95rem", fontWeight: 600, color: "#ddd" }}
-              >
-                Continue with Google
-              </span>
-            </>
           )}
         </button>
 
@@ -5730,7 +5638,6 @@ export default function App() {
   };
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
-  const isNative = Capacitor.isNativePlatform();
 
   const handleLogin = async () => {
     try {
@@ -5793,11 +5700,7 @@ export default function App() {
     return (
       <>
         <style>{GLOBAL_STYLES}</style>
-        <LoginScreen
-          onLogin={handleLogin}
-          onEmailLogin={handleEmailLogin}
-          exam={exam}
-        />
+        <LoginScreen onEmailLogin={handleEmailLogin} exam={exam} />
       </>
     );
 
