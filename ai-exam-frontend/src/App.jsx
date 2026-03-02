@@ -8,6 +8,11 @@ import {
   GoogleAuthProvider,
   signInWithCredential,
   signInWithPopup,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut,
+  getAuth,
 } from "firebase/auth";
 
 const provider = new GoogleAuthProvider();
@@ -268,10 +273,13 @@ function LoginScreen({ onLogin, onEmailLogin, exam }) {
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError("");
+
     try {
       await onLogin();
     } catch (e) {
-      setError("Sign-in failed. Please try again.");
+      console.error("FULL ERROR:", e);
+      alert(JSON.stringify(e));
+      setError(JSON.stringify(e));
       setLoading(false);
     }
   };
@@ -5645,6 +5653,15 @@ export default function App() {
   const [exam, setExam] = useState(localStorage.getItem("examai_exam") || "");
   const [activeTab, setActiveTab] = useState("chat");
   const API_URL = import.meta.env.VITE_API_URL;
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      GoogleAuth.initialize({
+        clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID, // ← was "YOUR_WEB_CLIENT_ID"
+        scopes: ["profile", "email"],
+        grantOfflineAccess: true,
+      });
+    }
+  }, []);
 
   const GLOBAL_STYLES = `
     @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
@@ -5712,24 +5729,31 @@ export default function App() {
   };
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
-  const isAndroid = /android/i.test(navigator.userAgent);
+  const isNative = Capacitor.isNativePlatform();
 
   const handleLogin = async () => {
-    if (Capacitor.isNativePlatform()) {
-      await GoogleAuth.initialize();
-      const googleUser = await GoogleAuth.signIn();
-      const credential = GoogleAuthProvider.credential(
-        googleUser.authentication.idToken
-      );
-      const result = await signInWithCredential(auth, credential);
-      localStorage.setItem("examai_userId", result.user.uid);
-      setUser(result.user);
-      setAppState("main");
-    } else {
-      const result = await signInWithPopup(auth, provider);
-      localStorage.setItem("examai_userId", result.user.uid);
-      setUser(result.user);
-      setAppState("main");
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const googleUser = await GoogleAuth.signIn();
+        if (!googleUser?.authentication?.idToken) {
+          throw new Error("No ID token received from Google");
+        }
+        const credential = GoogleAuthProvider.credential(
+          googleUser.authentication.idToken
+        );
+        const result = await signInWithCredential(auth, credential);
+        localStorage.setItem("examai_userId", result.user.uid);
+        setUser(result.user);
+        setAppState("main");
+      } else {
+        const result = await signInWithPopup(auth, provider);
+        localStorage.setItem("examai_userId", result.user.uid);
+        setUser(result.user);
+        setAppState("main");
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+      throw error;
     }
   };
   const handleEmailLogin = async (email, password, isSignUp) => {
