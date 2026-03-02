@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "909950827508",
+    "project_id": "examai-6d2e8",
+    "storage_bucket": "examai-6d2e8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:909950827508:android:e884f3428dec2331ec57a1",
+        "android_client_info": {
+          "package_name": "jeanix.in"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "909950827508-kobcljq1vgv97opvfvia8il6h8r811tl.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDDu6dmmsHNlQ5bssxGKCyx0ZmPOsWEv80"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "909950827508-kobcljq1vgv97opvfvia8il6h8r811tl.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
