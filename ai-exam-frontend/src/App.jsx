@@ -5656,7 +5656,8 @@ export default function App() {
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
       GoogleAuth.initialize({
-        clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID, // ← was "YOUR_WEB_CLIENT_ID"
+        clientId:
+          "95229249758-vhka9qn8sh3fnlatt3lj0tbfbuldch26.apps.googleusercontent.com", // ← was "YOUR_WEB_CLIENT_ID"
         scopes: ["profile", "email"],
         grantOfflineAccess: true,
       });
