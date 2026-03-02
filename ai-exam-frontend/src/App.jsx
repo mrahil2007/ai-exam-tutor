@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { auth } from "./firebase";
-import { GoogleAuth } from "@codetrix-studio/capacitor-google-auth";
+
 import { Capacitor } from "@capacitor/core";
 
 import {
-  GoogleAuthProvider,
   signInWithCredential,
   signInWithPopup,
   createUserWithEmailAndPassword,
@@ -14,8 +13,6 @@ import {
   signOut,
   getAuth,
 } from "firebase/auth";
-
-const provider = new GoogleAuthProvider();
 
 // ── USER ID ───────────────────────────────────────────────────────────────────
 const getUserId = () => {
@@ -5561,16 +5558,6 @@ export default function App() {
   const [exam, setExam] = useState(localStorage.getItem("examai_exam") || "");
   const [activeTab, setActiveTab] = useState("chat");
   const API_URL = import.meta.env.VITE_API_URL;
-  useEffect(() => {
-    if (Capacitor.isNativePlatform()) {
-      GoogleAuth.initialize({
-        clientId:
-          "95229249758-vhka9qn8sh3fnlatt3lj0tbfbuldch26.apps.googleusercontent.com", // ← was "YOUR_WEB_CLIENT_ID"
-        scopes: ["profile", "email"],
-        grantOfflineAccess: true,
-      });
-    }
-  }, []);
 
   const GLOBAL_STYLES = `
     @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
@@ -5639,31 +5626,6 @@ export default function App() {
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
 
-  const handleLogin = async () => {
-    try {
-      if (Capacitor.isNativePlatform()) {
-        const googleUser = await GoogleAuth.signIn();
-        if (!googleUser?.authentication?.idToken) {
-          throw new Error("No ID token received from Google");
-        }
-        const credential = GoogleAuthProvider.credential(
-          googleUser.authentication.idToken
-        );
-        const result = await signInWithCredential(auth, credential);
-        localStorage.setItem("examai_userId", result.user.uid);
-        setUser(result.user);
-        setAppState("main");
-      } else {
-        const result = await signInWithPopup(auth, provider);
-        localStorage.setItem("examai_userId", result.user.uid);
-        setUser(result.user);
-        setAppState("main");
-      }
-    } catch (error) {
-      console.error("Login error:", error);
-      throw error;
-    }
-  };
   const handleEmailLogin = async (email, password, isSignUp) => {
     let result;
     if (isSignUp) {
