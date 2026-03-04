@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
+import DeleteAccount from "./pages/DeleteAccount";
 
 // ── TYPING ANIMATION ──────────────────────────────────────────────────────────
 const typeText = (text, setMessages, onDone) => {
@@ -3367,6 +3368,43 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
             ))
           )}
         </div>
+        <div
+          style={{
+            padding: "12px",
+            borderTop: "1px solid #2a2a2a",
+            flexShrink: 0,
+          }}
+        >
+          <a
+            href="/delete-account"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              color: "#e53e3e",
+              textDecoration: "none",
+              fontSize: "0.85rem",
+              padding: "8px 10px",
+              borderRadius: 8,
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18" />
+              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+            </svg>
+            Delete Account
+          </a>
+        </div>
       </div>
 
       {/* MAIN CHAT */}
@@ -4138,7 +4176,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               color: "#444",
             }}
           >
-            Hold mic to speak • ExamAI can make mistakes. Verify important info.
+            Hold mic to speak • ExamAI can make mistakes.
           </div>
         </div>
       </div>
@@ -4574,6 +4612,9 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
+  if (window.location.pathname === "/delete-account") {
+    return <DeleteAccount />;
+  }
   const [appState, setAppState] = useState("splash");
   const [exam, setExam] = useState("");
   const [activeTab, setActiveTab] = useState("chat");

@@ -44,11 +44,11 @@ const aiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Quiz — 20 per hour per IP (on top of your existing per-user limit)
+// Quiz — 20 per hour per IP
 const quizLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
-  message: { error: "Quiz limit reached. Try again in an hour." },
+  message: { error: "Limit reached. Try again in an hour." },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -59,6 +59,7 @@ app.use("/chat", aiLimiter); // chat endpoint
 app.use("/chart/generate", aiLimiter); // chart endpoint
 app.use("/image", aiLimiter); // image/PDF endpoint
 app.use("/quiz/generate", quizLimiter); // quiz endpoint
+app.use("/flashcards/generate", quizLimiter); // flashcard generation limit
 
 const upload = multer();
 
@@ -86,13 +87,9 @@ connectDB();
 const getChats = () => db.collection("chats");
 const getQuizResults = () => db.collection("quiz_results");
 const getPlanners = () => db.collection("study_planners");
+const getFlashcards = () => db.collection("flashcards"); // Added flashcard collection
 
 // ── GOOGLE CLOUD VISION OCR ───────────────────────────────────────────────────
-// Free tier: 1,000 pages/month
-// Setup: set GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcp-key.json in .env
-//        run: npm install @google-cloud/vision
-// No pdfjs or canvas needed — Vision API accepts raw PDF bytes directly!
-
 let visionClient = null;
 try {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
@@ -103,17 +100,13 @@ try {
     );
   } else {
     console.warn(
-      "⚠️  GOOGLE_APPLICATION_CREDENTIALS not set — Google Vision OCR disabled.\n" +
-        "   To enable free OCR: set GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcp-key.json in .env"
+      "⚠️  GOOGLE_APPLICATION_CREDENTIALS not set — Google Vision OCR disabled."
     );
   }
 } catch (e) {
-  console.warn(
-    "⚠️  @google-cloud/vision not installed — run: npm install @google-cloud/vision"
-  );
+  console.warn("⚠️  @google-cloud/vision not installed");
 }
 
-// Accepts any buffer (PDF or image) — Google Vision handles both natively
 const ocrWithGoogleVision = async (fileBuffer) => {
   if (!visionClient) return null;
   try {
@@ -125,7 +118,6 @@ const ocrWithGoogleVision = async (fileBuffer) => {
       console.log(`✅ Google Vision OCR: extracted ${text.length} characters`);
       return text;
     }
-    console.log("ℹ️  Google Vision OCR: no text detected");
     return null;
   } catch (err) {
     console.warn("⚠️  Google Vision OCR error:", err.message);
@@ -180,6 +172,7 @@ Source: ${r.link}`;
     return "";
   }
 };
+
 // ── WORLD BANK DATA FETCHER ───────────────────────────────────────────────────
 const WORLD_BANK_INDICATORS = {
   GDP: "NY.GDP.MKTP.CD",
@@ -216,7 +209,23 @@ const fetchWorldBankData = async (countryCode, indicator) => {
   }
 };
 
-// ── QUIZ PROMPT ───────────────────────────────────────────────────────────────
+// ── PROMPTS ───────────────────────────────────────────────────────────────────
+
+const getFlashcardPrompt = (exam, topic, count) => {
+  return `You are an expert educator. Generate EXACTLY ${count} high-quality study flashcards for the ${exam} exam on the topic: "${topic}".
+Focus on high-yield facts, important definitions, and conceptual clarity for active recall.
+
+Return ONLY a valid JSON array. No markdown, no extra text.
+Format:
+[
+  {
+    "front": "Clear question or conceptual term here",
+    "back": "Detailed answer or explanation here. Keep it concise but thorough.",
+    "category": "${topic}"
+  }
+]`;
+};
+
 const getQuizPrompt = (exam, topic, count, contextBlock = "") => {
   const upscGS1Formats = `
 STYLE REQUIREMENTS (MUST MIRROR REAL UPSC GS PAPER I):
@@ -253,13 +262,13 @@ NEVER use "All of the above" or "None of the above" as options.
 
   const examInstructions = {
     UPSC: `You are a UPSC Civil Services Preliminary Examination question setter for GS Paper I.
-Generate questions STRICTLY based on UPSC Prelims GS Paper I PYQs (2014–2023) and NCERT textbooks Class 6–12.
+Generate questions STRICTLY based on UPSC Prelims GS Paper I PYQs (2014–2025) and NCERT textbooks Class 6–12.
 ABSOLUTE RESTRICTIONS: DO NOT invent Articles, Acts, committees, schemes, or facts not in NCERT or PYQs.
-Every single question must be 100% traceable to either a UPSC PYQ (2014–2023) or an NCERT Class 6–12 textbook.
+Every single question must be 100% traceable to either a UPSC PYQ (2014–2025) or an NCERT Class 6–12 textbook.
 Topic: "${topic}"
 ${upscGS1Formats}`,
 
-    CSAT: `You are a UPSC CSAT (Paper II) question setter. Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2023).
+    CSAT: `You are a UPSC CSAT (Paper II) question setter. Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2025).
 TOPIC: "${topic}"
 Cover: READING COMPREHENSION, LOGICAL REASONING, DECISION MAKING, BASIC NUMERACY, DATA INTERPRETATION, GENERAL MENTAL ABILITY.
 RULES: Every numerical answer uniquely correct. DIFFICULTY: 50% Moderate, 50% Hard. Show full working in explanation.
@@ -421,7 +430,104 @@ Format:
 
 export { getQuizPrompt };
 
-// ── BASIC ─────────────────────────────────────────────────────────────────────
+// ── AI ENGINE ─────────────────────────────────────────────────────────────────
+
+const GROQ_MODELS = [
+  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", maxTokens: 3000 },
+  { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 3000 },
+  { id: "llama-3.3-70b-versatile", maxTokens: 4096 },
+];
+
+const CONTEXT_EXTRA_TOKENS = 2000;
+const userQuizCounts = new Map();
+const USER_HOURLY_LIMIT = 15;
+
+const checkUserRateLimit = (userId) => {
+  if (!userId) return true;
+  const now = Date.now();
+  const entry = userQuizCounts.get(userId);
+  if (!entry || now - entry.windowStart > 60 * 60 * 1000) {
+    userQuizCounts.set(userId, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= USER_HOURLY_LIMIT) return false;
+  entry.count++;
+  return true;
+};
+
+const callGPT52 = async (prompt, hasContext = false) => {
+  if (!process.env.OPENAI_API_KEY) return null;
+  const maxTokens = 4000 + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.2",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_completion_tokens: maxTokens,
+      }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content?.trim();
+  } catch {
+    return null;
+  }
+};
+
+const callGroqWithFallback = async (prompt, hasContext = false) => {
+  for (const model of GROQ_MODELS) {
+    const maxTokens = model.maxTokens + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
+    try {
+      const response = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: model.id,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.2,
+            max_completion_tokens: maxTokens,
+          }),
+        }
+      );
+      if (!response.ok) continue;
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content?.trim();
+      if (content) return content;
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("All fallback models failed");
+};
+
+const getUsers = () => db.collection("users");
+
+const generateAIContent = async (prompt, hasContext = false) => {
+  const gptResult = await callGPT52(prompt, hasContext);
+  if (gptResult) return gptResult;
+  return callGroqWithFallback(prompt, hasContext);
+};
+
+const extractJSONArray = (text) => {
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start === -1 || end === -1) throw new Error("JSON not found");
+  const jsonString = text.slice(start, end + 1);
+  return JSON.parse(jsonString);
+};
+
+// ── BASIC ROUTES ──────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.send("✅ Backend running"));
 app.get("/health", (req, res) => res.send("Server alive"));
 
@@ -467,7 +573,6 @@ app.delete("/chats/:userId/:chatId", async (req, res) => {
 app.post("/chats/:userId", async (req, res) => {
   try {
     const { exam = "General" } = req.body;
-
     const newChat = {
       userId: req.params.userId,
       title: "New Chat",
@@ -476,15 +581,9 @@ app.post("/chats/:userId", async (req, res) => {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-
     const result = await getChats().insertOne(newChat);
-
-    res.json({
-      chatId: result.insertedId,
-      ...newChat,
-    });
+    res.json({ chatId: result.insertedId, ...newChat });
   } catch (err) {
-    console.error("Create chat error:", err.message);
     res.status(500).json({ error: "Failed to create chat" });
   }
 });
@@ -492,284 +591,101 @@ app.post("/chats/:userId", async (req, res) => {
 // ── CHAT ──────────────────────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
   const { question, exam, history = [], userId, chatId } = req.body;
-
   if (!question) return res.status(400).json({ error: "Question is required" });
-
   try {
     let finalPrompt = question;
-
-    // 🤖 LLM Agent decides which tool to use (replaces keyword routing)
     const decision = await askAIAgent(question, exam);
-    console.log(
-      `🤖 Agent decision: ${decision.action}`,
-      decision.query || decision.indicator || ""
-    );
-
     if (decision.action === "web_search") {
       const searchContext = await fetchLiveSearchContext(decision.query);
-      if (searchContext) {
-        finalPrompt = `${searchContext}
-
-You are an AI assistant for competitive exams (UPSC, PCS, SSC, Banking, JEE, NEET).
-Use the live search results above as PRIMARY source.
-Prefer official government sources and authoritative references.
-Answer in concise, exam-relevant format.
-
-Question: ${question}`;
-      }
+      if (searchContext)
+        finalPrompt = `${searchContext}\n\nQuestion: ${question}`;
     } else if (decision.action === "world_bank") {
       const wbData = await fetchWorldBankData(
         decision.country_code,
         decision.indicator
       );
-      if (wbData) {
-        finalPrompt = `${wbData}
-
-Use the World Bank data above as your PRIMARY source for all numbers.
-Answer in a clear, exam-relevant format with the latest available figures.
-
-Question: ${question}`;
-      }
+      if (wbData) finalPrompt = `${wbData}\n\nQuestion: ${question}`;
     }
-    // decision.action === "direct" → finalPrompt stays as question, no API call needed
-
     const answer = await askAI(finalPrompt, exam, history, false);
-
-    // ── SAVE CHAT ─────────────────────────────
     if (userId && chatId) {
-      const userMessage = {
-        role: "user",
-        content: question,
-        timestamp: new Date(),
-      };
-
-      const aiMessage = {
-        role: "assistant",
-        content: answer,
-        timestamp: new Date(),
-      };
-
-      const chat = await getChats().findOne({
-        _id: new ObjectId(chatId),
-        userId,
-      });
-
-      const isFirstMessage = !chat?.messages?.length;
-      const title = isFirstMessage
-        ? question.slice(0, 50) + (question.length > 50 ? "..." : "")
-        : chat.title;
-
       await getChats().updateOne(
         { _id: new ObjectId(chatId), userId },
         {
-          $push: { messages: { $each: [userMessage, aiMessage] } },
-          $set: { updatedAt: new Date(), title, exam },
+          $push: {
+            messages: {
+              $each: [
+                { role: "user", content: question, timestamp: new Date() },
+                { role: "assistant", content: answer, timestamp: new Date() },
+              ],
+            },
+          },
+          $set: { updatedAt: new Date() },
         }
       );
     }
-
     res.json({ answer });
   } catch (err) {
-    console.error("Chat error:", err.message);
-    res.status(500).json({
-      error: "AI service temporarily unstable. Please try again.",
-    });
+    res.status(500).json({ error: "AI service failed" });
+  }
+});
+//1. Add the collection helper (near your other getChats helpers)
+
+// 2. Add these 2 routes (near your other routes)
+
+// Sync User Profile (Saves Name, Exam, and XP to MongoDB)
+app.post("/user/sync", async (req, res) => {
+  const { userId, userName, exam, xp = 0 } = req.body;
+  if (!userId) return res.status(400).json({ error: "userId required" });
+
+  try {
+    await getUsers().updateOne(
+      { userId },
+      {
+        $set: { userName, exam, updatedAt: new Date() },
+        $inc: { xp: xp }, // This allows you to add XP to their total
+      },
+      { upsert: true }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to sync user" });
   }
 });
 
-// ── GROQ FALLBACK CHAIN ───────────────────────────────────────────────────────
-// ── MODEL CONFIG ─────────────────────────────────────────────────────────────
-// GPT-4o = primary (best accuracy for UPSC/exam questions)
-// Groq models = free fallback chain
-
-const GROQ_MODELS = [
-  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", maxTokens: 3000 },
-  { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 3000 },
-  { id: "llama-3.3-70b-versatile", maxTokens: 4096 },
-];
-
-const CONTEXT_EXTRA_TOKENS = 2000;
-const userQuizCounts = new Map();
-const USER_HOURLY_LIMIT = 15;
-
-const checkUserRateLimit = (userId) => {
-  if (!userId) return true;
-  const now = Date.now();
-  const entry = userQuizCounts.get(userId);
-  if (!entry || now - entry.windowStart > 60 * 60 * 1000) {
-    userQuizCounts.set(userId, { count: 1, windowStart: now });
-    return true;
-  }
-  if (entry.count >= USER_HOURLY_LIMIT) return false;
-  entry.count++;
-  return true;
-};
-
-// GPT-4o — primary, best accuracy
-// GPT-5.2 — Primary Model
-const callGPT52 = async (prompt, hasContext = false) => {
-  if (!process.env.OPENAI_API_KEY) return null;
-
-  const maxTokens = 4000 + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
-
+// Get User Profile
+app.get("/user/:userId", async (req, res) => {
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-5.2",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        max_completion_tokens: maxTokens,
-      }),
-    });
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) return null;
-
-    console.log("✅ Quiz generated using model: gpt-5.2");
-    return content;
-  } catch {
-    return null;
+    const user = await getUsers().findOne({ userId: req.params.userId });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load user" });
   }
-};
-// Groq fallback chain — free models
-const callGroqWithFallback = async (prompt, hasContext = false) => {
-  for (const model of GROQ_MODELS) {
-    const maxTokens = model.maxTokens + (hasContext ? CONTEXT_EXTRA_TOKENS : 0);
-
-    try {
-      const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: model.id,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.2,
-            max_completion_tokens: maxTokens, // ✅ FIXED
-          }),
-        }
-      );
-
-      if (!response.ok) continue;
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content?.trim();
-      if (!content) continue;
-
-      console.log(`✅ Quiz generated using model: ${model.id}`);
-      return content;
-    } catch {
-      continue;
-    }
-  }
-
-  throw new Error("All fallback models failed");
-};
-
-// Main entry — GPT-4o first, Groq fallback
-const generateQuizContent = async (prompt, hasContext = false) => {
-  const gptResult = await callGPT52(prompt, hasContext);
-  if (gptResult) return gptResult;
-  return callGroqWithFallback(prompt, hasContext);
-};
-// ── SAFE JSON ARRAY EXTRACTOR ───────────────────────────────
-const extractJSONArray = (text) => {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-
-  if (start === -1 || end === -1) {
-    throw new Error("JSON boundaries not found");
-  }
-
-  const jsonString = text.slice(start, end + 1);
-
-  if (!jsonString.trim().endsWith("]")) {
-    throw new Error("Truncated JSON detected");
-  }
-
-  return JSON.parse(jsonString);
-};
+});
 // ── QUIZ ──────────────────────────────────────────────────────────────────────
 app.post("/quiz/generate", async (req, res) => {
   const { topic, exam = "General", count = 10, userId, state } = req.body;
-  if (!checkUserRateLimit(userId)) {
-    return res.status(429).json({
-      error: "Hourly quiz limit reached. Please try again later.",
-    });
-  }
-
-  if (!topic) return res.status(400).json({ error: "Topic is required" });
-
+  if (!checkUserRateLimit(userId))
+    return res.status(429).json({ error: "Limit reached" });
+  if (!topic) return res.status(400).json({ error: "Topic required" });
   const safeCount = Math.min(Number(count) || 10, 20);
   const finalTopic =
     exam === "State PCS" && state ? `${state} — ${topic}` : topic;
-
-  let contextBlock = "";
-  if (exam === "Current Affairs") {
-    contextBlock = await fetchLiveSearchContext(
-      `${finalTopic} India government PIB official`
-    );
-  }
-
+  let contextBlock =
+    exam === "Current Affairs"
+      ? await fetchLiveSearchContext(
+          `${finalTopic} India government PIB official`
+        )
+      : "";
   const prompt = getQuizPrompt(exam, finalTopic, safeCount, contextBlock);
-
   try {
-    let content = await callGPT52(prompt, !!contextBlock);
-
-    if (!content) {
-      throw new Error("GPT-5.2 failed to generate quiz");
-    }
-
-    // Remove markdown if present
-    content = content
-      .replace(/```json/gi, "")
-      .replace(/```/g, "")
-      .trim();
-
-    let questions;
-
-    try {
-      questions = extractJSONArray(content);
-    } catch (err) {
-      console.warn("⚠️ First parse failed. Retrying once...");
-
-      // Retry once if truncated
-      content = await callGPT52(prompt, !!contextBlock);
-
-      if (!content) throw new Error("Retry failed");
-
-      content = content
-        .replace(/```json/gi, "")
-        .replace(/```/g, "")
-        .trim();
-
-      questions = extractJSONArray(content);
-    }
-
-    if (!Array.isArray(questions)) throw new Error("Invalid quiz format");
-
-    res.json({
-      questions,
-      contextUsed: exam === "Current Affairs" && !!contextBlock,
-    });
+    const content = await generateAIContent(prompt, !!contextBlock);
+    const questions = extractJSONArray(
+      content.replace(/```json|```/gi, "").trim()
+    );
+    res.json({ questions, contextUsed: !!contextBlock });
   } catch (err) {
-    console.error("Quiz error:", err.message);
-    res.status(500).json({
-      error:
-        "AI service temporarily unstable. Please try again in a few seconds.",
-    });
+    res.status(500).json({ error: "Quiz failed" });
   }
 });
 
@@ -805,13 +721,120 @@ app.get("/quiz/history/:userId", async (req, res) => {
     res.status(500).json({ error: "Failed to load history" });
   }
 });
+// ── CURRENT AFFAIRS ROUTE (Uses Serper + AI) ──────────────────────────────────
+app.get("/current-affairs/:exam", async (req, res) => {
+  const { exam } = req.params;
+  const today = new Date().toISOString().split("T")[0];
+
+  try {
+    // 1. Use your existing Serper integration to get latest news
+    const searchQuery = `latest current affairs for ${exam} exam India ${today}`;
+    const liveContext = await fetchLiveSearchContext(searchQuery);
+
+    // 2. Use AI to summarize the news into the format the app expects
+    const prompt = `
+      You are an expert news editor for competitive exams.
+      Based on these search results:
+      ${liveContext}
+
+      Create a summary of the top 5 most important news items for a ${exam} aspirant today (${today}).
+      Return ONLY valid JSON in this format:
+      {
+        "date": "${today}",
+        "summaries": ["News item 1 summary", "News item 2 summary", ...],
+        "quiz": [] 
+      }
+    `;
+
+    const aiResponse = await generateAIContent(prompt);
+    const digest = JSON.parse(aiResponse.replace(/```json|```/g, "").trim());
+
+    res.json(digest);
+  } catch (err) {
+    console.error("Current Affairs error:", err.message);
+    // Fallback if AI/Serper fails
+    res.json({
+      date: today,
+      summaries: [
+        "Stay tuned for today's top updates.",
+        "Check official government portals for the latest notifications.",
+      ],
+      quiz: [],
+    });
+  }
+});
+// ── FLASHCARDS (NEW) ─────────────────────────────────────────────────────────
+
+app.get("/flashcards/:userId", async (req, res) => {
+  try {
+    const cards = await getFlashcards()
+      .find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(cards);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load flashcards" });
+  }
+});
+
+app.post("/flashcards/generate", async (req, res) => {
+  const { topic, exam = "General", count = 10, userId } = req.body;
+  if (!topic || !userId)
+    return res.status(400).json({ error: "Topic and userId required" });
+
+  const safeCount = Math.min(Number(count) || 10, 20);
+  const prompt = getFlashcardPrompt(exam, topic, safeCount);
+
+  try {
+    let content = await generateAIContent(prompt);
+    if (!content) throw new Error("AI failed");
+
+    content = content
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    const rawCards = extractJSONArray(content);
+
+    const cards = rawCards.map((c) => ({
+      ...c,
+      userId,
+      interval: 0,
+      lastReviewed: null,
+      createdAt: new Date(),
+    }));
+
+    if (cards.length > 0) {
+      await getFlashcards().insertMany(cards);
+    }
+    res.json({ cards });
+  } catch (err) {
+    console.error("Flashcard generation error:", err.message);
+    res.status(500).json({ error: "Failed to generate flashcards" });
+  }
+});
+
+app.post("/flashcards/review", async (req, res) => {
+  const { cardId, difficulty } = req.body;
+  const inc = { EASY: 7, GOOD: 3, HARD: 1 }[difficulty] || 1;
+  try {
+    await getFlashcards().updateOne(
+      { _id: new ObjectId(cardId) },
+      {
+        $set: { lastReviewed: new Date() },
+        $inc: { interval: inc },
+      }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update review" });
+  }
+});
 
 // ── STUDY PLANNER ─────────────────────────────────────────────────────────────
 app.post("/planner/generate", async (req, res) => {
   const { exam, examDate, topics, hoursPerDay = 4, userId } = req.body;
   if (!exam || !examDate)
     return res.status(400).json({ error: "exam and examDate required" });
-
   const today = new Date();
   const targetDate = new Date(examDate);
   const daysLeft = Math.max(
@@ -819,41 +842,7 @@ app.post("/planner/generate", async (req, res) => {
     Math.ceil((targetDate - today) / (1000 * 60 * 60 * 24))
   );
   const planDays = Math.min(daysLeft, 30);
-
-  const prompt = `Create a ${planDays}-day study plan for ${exam} exam on ${examDate}.
-${
-  topics
-    ? `Topics to cover: ${topics}`
-    : `Use standard ${exam} syllabus topics.`
-}
-Study time: ${hoursPerDay} hours/day.
-
-Return ONLY valid JSON, no markdown, no extra text:
-{
-  "title": "Plan title here",
-  "exam": "${exam}",
-  "examDate": "${examDate}",
-  "totalDays": ${planDays},
-  "days": [
-    {
-      "day": 1,
-      "date": "YYYY-MM-DD",
-      "focus": "Main topic",
-      "topics": ["Topic 1", "Topic 2"],
-      "timeAllocation": "${hoursPerDay} hours",
-      "practiceQuestions": "20 MCQs on topic",
-      "revisionTip": "Quick tip",
-      "completed": false
-    }
-  ]
-}
-Rules:
-- Generate EXACTLY ${planDays} day objects
-- Last 2 days = full revision
-- Date for day 1 = ${today.toISOString().split("T")[0]}
-- Keep each day's data SHORT
-- Return only the JSON object, nothing else`;
-
+  const prompt = `Create a ${planDays}-day study plan for ${exam} exam on ${examDate}. Study time: ${hoursPerDay} hours/day. Return ONLY valid JSON.`;
   try {
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -871,36 +860,9 @@ Rules:
         }),
       }
     );
-
     const data = await response.json();
     let content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) throw new Error("Empty AI response");
-
-    content = content
-      .replace(/```json\n?/g, "")
-      .replace(/```\n?/g, "")
-      .trim();
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("No JSON found in response");
-    content = jsonMatch[0];
-
-    let plan;
-    try {
-      plan = JSON.parse(content);
-    } catch (parseErr) {
-      const lastGood = content.lastIndexOf(',"completed":false}');
-      if (lastGood === -1) throw new Error("Cannot repair JSON");
-      const repaired = content.slice(0, lastGood + 19) + "]}";
-      const fixed =
-        repaired.endsWith("]}") && !repaired.endsWith("}}")
-          ? repaired + "}"
-          : repaired;
-      plan = JSON.parse(fixed);
-    }
-
-    if (!plan.days || !Array.isArray(plan.days))
-      throw new Error("Invalid plan format");
-
+    const plan = JSON.parse(content.replace(/```json|```/g, "").trim());
     if (userId) {
       const existing = await getPlanners().findOne({ userId, exam });
       if (existing) {
@@ -919,13 +881,9 @@ Rules:
         plan._id = result.insertedId;
       }
     }
-
     res.json({ plan });
   } catch (err) {
-    console.error("Planner error:", err.message);
-    res
-      .status(500)
-      .json({ error: "Failed to generate study plan. Please try again." });
+    res.status(500).json({ error: "Planner failed" });
   }
 });
 
@@ -943,20 +901,19 @@ app.get("/planner/:userId", async (req, res) => {
 
 app.patch("/planner/:plannerId/day/:dayIndex", async (req, res) => {
   const { completed } = req.body;
-  const dayIndex = parseInt(req.params.dayIndex);
   try {
     await getPlanners().updateOne(
       { _id: new ObjectId(req.params.plannerId) },
       {
         $set: {
-          [`days.${dayIndex}.completed`]: completed,
+          [`days.${req.params.dayIndex}.completed`]: completed,
           updatedAt: new Date(),
         },
       }
     );
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: "Failed to update day" });
+    res.status(500).json({ error: "Failed update" });
   }
 });
 
@@ -968,96 +925,37 @@ app.delete("/planner/:userId/:plannerId", async (req, res) => {
     });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: "Failed to delete planner" });
+    res.status(500).json({ error: "Delete failed" });
   }
 });
 
 // ── IMAGE / PDF ROUTE ─────────────────────────────────────────────────────────
-// Pipeline:
-//   PDF (digital)  → unpdf text extraction → askAI
-//   PDF (scanned)  → Google Vision OCR     → askAI
-//   PDF (fallback) → Llama vision          → askAI
-//   Image          → Llama vision          → askAI
 app.post("/image", upload.single("image"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "File required" });
-
-    const allowedTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-    ];
-    if (!allowedTypes.includes(req.file.mimetype))
-      return res.status(400).json({ error: "Only JPEG/PNG/WEBP/PDF allowed" });
-
-    // ── PDF ───────────────────────────────────────────────────────────────────
     if (req.file.mimetype === "application/pdf") {
-      // Step 1: Digital PDF — fast text extraction via unpdf
-      try {
-        const uint8 = new Uint8Array(req.file.buffer);
-        const { text } = await extractText(uint8, { mergePages: true });
-        if (text?.trim()) {
-          console.log("✅ Digital PDF — text extracted via unpdf");
-          const answer = await askAI(text.slice(0, 4000), req.body.exam);
-          return res.json({ answer, source: "text-extraction" });
-        }
-      } catch (e) {
-        console.log("📄 Text extraction failed:", e.message);
-      }
-
-      // Step 2: Scanned PDF — Google Vision (no canvas/pdfjs needed, accepts raw PDF bytes)
-      if (visionClient) {
-        console.log("🔍 Sending scanned PDF to Google Vision OCR...");
-        const visionText = await ocrWithGoogleVision(req.file.buffer);
-        if (visionText) {
-          console.log("✅ Scanned PDF answered via Google Vision OCR");
-          const answer = await askAI(visionText.slice(0, 4000), req.body.exam);
-          return res.json({ answer, source: "google-vision-ocr" });
-        }
-      }
-
-      // Step 3: Fallback — Llama vision
-      try {
-        console.log("↩️  Falling back to Llama vision...");
-        const answer = await askAIWithImage(
-          req.file.buffer,
-          "application/pdf",
-          req.body.exam
-        );
-        return res.json({ answer, source: "vision-ocr" });
-      } catch (err) {
-        console.error("❌ Llama vision fallback failed:", err.message);
-        return res.json({
-          answer:
-            "📸 Could not read this scanned PDF. Please take a clear photo of the document using the camera button for best results!",
-        });
-      }
+      const visionText = await ocrWithGoogleVision(req.file.buffer);
+      const answer = await askAI(visionText || "Extract text", req.body.exam);
+      return res.json({ answer });
     }
-
-    // ── IMAGE (JPEG / PNG / WEBP) ─────────────────────────────────────────────
     const answer = await askAIWithImage(
       req.file.buffer,
       req.file.mimetype,
       req.body.exam
     );
-    res.json({ answer, source: "vision" });
+    res.json({ answer });
   } catch (err) {
-    console.error("File error:", err.message);
-    res.status(500).json({ error: "File processing failed" });
+    res.status(500).json({ error: "Image failed" });
   }
 });
 
-// ── TTS ───────────────────────────────────────────────────────────────────────
-const VOICES = ["autumn", "diana", "hannah", "austin", "daniel", "troy"];
+// ── TTS & TRANSCRIPTION ───────────────────────────────────────────────────────
 app.post("/speak", async (req, res) => {
   const { text, voice } = req.body;
-  if (!text) return res.status(400).json({ error: "Text required" });
-  const selectedVoice = VOICES.includes(voice) ? voice : "hannah";
   try {
     const response = await groq.audio.speech.create({
       model: "canopylabs/orpheus-v1-english",
-      voice: selectedVoice,
+      voice: voice || "hannah",
       input: text.slice(0, 200),
       response_format: "wav",
     });
@@ -1065,187 +963,27 @@ app.post("/speak", async (req, res) => {
     res.set("Content-Type", "audio/wav");
     res.send(buffer);
   } catch (err) {
-    console.error("TTS error:", err.message);
     res.status(500).json({ error: "Voice generation failed" });
   }
 });
 
-// ── TRANSCRIPTION ─────────────────────────────────────────────────────────────
 app.post("/transcribe", upload.single("audio"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "Audio required" });
-    const mimeType = req.file.mimetype || "audio/webm";
-    const ext = mimeType.includes("mp4")
-      ? "mp4"
-      : mimeType.includes("ogg")
-      ? "ogg"
-      : mimeType.includes("wav")
-      ? "wav"
-      : mimeType.includes("m4a")
-      ? "m4a"
-      : "webm";
     const transcription = await groq.audio.transcriptions.create({
-      file: new File([req.file.buffer], `audio.${ext}`, { type: mimeType }),
+      file: new File([req.file.buffer], `audio.webm`, { type: "audio/webm" }),
       model: "whisper-large-v3-turbo",
       language: "en",
     });
     res.json({ text: transcription.text });
   } catch (err) {
-    console.error("Transcription error:", err.message);
     res.status(500).json({ error: "Transcription failed" });
   }
 });
 
-// ── CHART GENERATION (Groq Only - Free) ─────────────────────────────
-
-// ── CHART GENERATION ENDPOINT ─────────────────────────────────────────────────
-// Add this to your server.js
-
-// ── CHART GENERATION ENDPOINT ─────────────────────────────────────────────────
+// ── CHART GENERATION ──────────────────────────────────────────────────────────
 app.post("/chart/generate", async (req, res) => {
-  const { question, exam } = req.body;
-  if (!question) return res.status(400).json({ error: "Question is required" });
-
-  // 🔎 Detect if question needs live data
-  const needsLiveData =
-    /latest|current|recent|2024|2025|2026|rate|price|gdp|inflation|population|rank|index|score|statistics|data|growth|percentage|budget|revenue|export|import|production|consumption|unemployment|literacy|poverty/i.test(
-      question
-    );
-
-  let liveContext = "";
-  if (needsLiveData) {
-    liveContext = await fetchLiveSearchContext(`${question} statistics data`);
-    if (liveContext) {
-      console.log("✅ Chart: live search context fetched from Serper");
-    }
-  }
-
-  const prompt = `
-You are a strict JSON generator for a competitive exam AI app.
-${
-  liveContext
-    ? `\nLIVE DATA FROM WEB (use this as PRIMARY source for all numbers and facts):\n${liveContext}\n`
-    : ""
-}
-Return ONLY valid JSON.
-Do NOT include markdown.
-Do NOT include text before or after JSON.
-
-If the question can be visualized as a chart, return:
-
-{
-  "type": "chart",
-  "chartType": "bar" | "line" | "pie" | "doughnut",
-  "title": "",
-  "description": "",
-  "data": {
-    "labels": [],
-    "datasets": [
-      {
-        "label": "",
-        "data": [],
-        "color": "#10a37f"
-      }
-    ]
-  },
-  "xAxisLabel": "",
-  "yAxisLabel": "",
-  "source": ""
-}
-
-Rules:
-- If live data is provided above, extract real numbers from it for the chart
-- Use the most accurate and recent data available
-- Max 10 data points
-- Labels and data array length must match exactly
-- Choose the best chart type for the data (bar for comparisons, line for trends, pie/doughnut for proportions)
-- If the question cannot be visualized as a chart, return:
-
-{
-  "type": "text",
-  "answer": "Explain the answer briefly here"
-}
-
-User request: ${question}
-`;
-
-  const parseChartResponse = (content) => {
-    content = content
-      .replace(/```json/gi, "")
-      .replace(/```/g, "")
-      .trim();
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Invalid JSON format");
-    return JSON.parse(jsonMatch[0]);
-  };
-
-  // 1️⃣ Try Gemini first (with key rotation)
-  try {
-    const geminiKeys = [
-      process.env.GEMINI_API_KEY_1,
-      process.env.GEMINI_API_KEY_2,
-      process.env.GEMINI_API_KEY_3,
-      process.env.GEMINI_API_KEY,
-    ].filter(Boolean);
-
-    for (let i = 0; i < geminiKeys.length; i++) {
-      const key = geminiKeys[i];
-
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: 1500,
-              },
-            }),
-          }
-        );
-
-        if (response.status === 429) {
-          console.warn(
-            `⚠️ Gemini chart key ${i + 1} quota exceeded → trying next...`
-          );
-          continue;
-        }
-
-        if (!response.ok) {
-          console.warn(`⚠️ Gemini chart key ${i + 1} failed → trying next...`);
-          continue;
-        }
-
-        const data = await response.json();
-        const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (!content) continue;
-
-        const parsed = parseChartResponse(content);
-        console.log(
-          `✅ Chart generated by Gemini (key ${i + 1})${
-            liveContext ? " with live data" : ""
-          }`
-        );
-        return res.json(parsed);
-      } catch (keyErr) {
-        console.warn(`⚠️ Gemini chart key ${i + 1} error:`, keyErr.message);
-        continue;
-      }
-    }
-
-    console.warn("⚠️ All Gemini chart keys failed → falling back to Groq");
-  } catch (err) {
-    console.warn(
-      "⚠️ Gemini chart failed:",
-      err.message,
-      "→ falling back to Groq"
-    );
-  }
-
-  // 2️⃣ Fallback to Groq
+  const { question } = req.body;
+  const prompt = `Generate a JSON chart for: ${question}. Valid JSON only.`;
   try {
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -1256,33 +994,36 @@ User request: ${question}
           Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "meta-llama/llama-4-maverick-17b-128e-instruct",
+          model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.1,
-          max_completion_tokens: 1500,
         }),
       }
     );
-
-    if (!response.ok) throw new Error("Groq API error");
-
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content?.trim();
-    if (!content) throw new Error("Empty response from Groq");
-
-    const parsed = parseChartResponse(content);
-    console.log(
-      `✅ Chart generated by Groq fallback${
-        liveContext ? " with live data" : ""
-      }`
+    res.json(
+      JSON.parse(
+        data.choices[0].message.content.replace(/```json|```/g, "").trim()
+      )
     );
-    return res.json(parsed);
   } catch (err) {
-    console.error("❌ Chart generation failed:", err.message);
-    res.status(500).json({
-      type: "text",
-      answer: "⚠️ Could not generate chart. Try rephrasing your question.",
-    });
+    res.status(500).json({ type: "text", answer: "⚠️ Chart failed" });
+  }
+});
+// ── DATA DELETION ROUTE (Required for Play Store Compliance) ─────────────────
+app.delete("/user/:userId/delete-data", async (req, res) => {
+  const { userId } = req.params;
+  try {
+    // Delete all user related data across collections
+    await db.collection("users").deleteOne({ userId });
+    await db.collection("chats").deleteMany({ userId });
+    await db.collection("quiz_results").deleteMany({ userId });
+    await db.collection("study_planners").deleteMany({ userId });
+    await db.collection("flashcards").deleteMany({ userId });
+
+    res.json({ success: true, message: "All user data deleted successfully." });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete user data" });
   }
 });
 // ── ERROR HANDLERS ────────────────────────────────────────────────────────────
