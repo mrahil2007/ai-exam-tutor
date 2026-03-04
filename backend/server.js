@@ -10,6 +10,7 @@ import Groq from "groq-sdk";
 import { MongoClient, ObjectId } from "mongodb";
 
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy
 app.use(
   cors({
     origin: [
