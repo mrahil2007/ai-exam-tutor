@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import DeleteAccount from "./pages/DeleteAccount";
 
@@ -113,6 +113,111 @@ const EXAM_META = {
   Banking: { icon: "🏦", color: "#06b6d4", desc: "Bank exams" },
   GATE: { icon: "🔬", color: "#f97316", desc: "Tech & Science" },
   CAT: { icon: "📊", color: "#ef4444", desc: "Management" },
+};
+
+// ── POLLINATIONS IMAGE HELPERS ───────────────────────────────────────────────
+const escapeMarkdownAlt = (text = "") =>
+  text.replace(/\n+/g, " ").replace(/\[/g, "\\[").replace(/\]/g, "\\]").trim();
+
+const buildPollinationsCandidates = (prompt) => {
+  const seed = Math.floor(Math.random() * 999999);
+  const encodedPrompt = encodeURIComponent(prompt);
+  const query = `width=768&height=768&nologo=true&seed=${seed}`;
+  return [
+    `https://gen.pollinations.ai/image/${encodedPrompt}?model=flux`,
+    `https://gen.pollinations.ai/image/${encodedPrompt}?model=turbo`,
+    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}`,
+    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}&model=flux`,
+    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}&model=turbo`,
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}`,
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}&model=flux`,
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}&model=turbo`,
+  ];
+};
+
+const canLoadImage = (url, timeoutMs = 4500) =>
+  new Promise((resolve) => {
+    if (!url) return resolve(false);
+    const img = new Image();
+    const timer = setTimeout(() => {
+      img.onload = null;
+      img.onerror = null;
+      resolve(false);
+    }, timeoutMs);
+    img.onload = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    img.src = url;
+  });
+
+const resolvePollinationsUrl = async (prompt, apiUrl) => {
+  const candidates = [];
+
+  if (apiUrl) {
+    let timeoutId;
+    try {
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(`${apiUrl}/image/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const data = await res.json().catch(() => null);
+      if (res.status === 401 || res.status === 403) return null;
+      if (data) {
+        if (typeof data?.imageUrl === "string" && data.imageUrl.trim())
+          candidates.push(data.imageUrl.trim());
+        if (typeof data?.proxyUrl === "string" && data.proxyUrl.trim())
+          candidates.push(data.proxyUrl.trim());
+        if (Array.isArray(data?.directUrls)) {
+          for (const url of data.directUrls) {
+            if (typeof url === "string" && url.trim()) candidates.push(url.trim());
+          }
+        }
+      }
+    } catch (e) {
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  for (const url of buildPollinationsCandidates(prompt)) {
+    if (!candidates.includes(url)) candidates.push(url);
+  }
+
+  for (const url of candidates) {
+    if (await canLoadImage(url)) return url;
+  }
+
+  return null;
+};
+
+const extractImagePrompt = (text = "") => {
+  const value = text.trim();
+  if (!value) return null;
+
+  const slashMatch = value.match(/^\/(?:image|img|imagine)\s+(.+)$/i);
+  if (slashMatch?.[1]?.trim()) return slashMatch[1].trim();
+
+  const chainedVerbMatch = value.match(
+    /^(?:please\s+)?(?:(?:create|generate|draw|make|imagine)\s+)+(?:an?\s+)?image(?:\s+(?:of|for))?\s*[:,-]?\s*(.+)$/i
+  );
+  if (chainedVerbMatch?.[1]?.trim()) return chainedVerbMatch[1].trim();
+
+  const politeMatch = value.match(
+    /^(?:can|could|would)\s+you\s+(?:(?:create|generate|draw|make|imagine)\s+)+(?:an?\s+)?image(?:\s+(?:of|for))?\s*[:,-]?\s*(.+)$/i
+  );
+  if (politeMatch?.[1]?.trim()) return politeMatch[1].trim();
+
+  return null;
 };
 
 // ── SPLASH SCREEN ─────────────────────────────────────────────────────────────
@@ -473,7 +578,7 @@ function SwipeView({ activeTab, tabs }) {
   const [prevTab, setPrevTab] = useState(activeTab);
   const [animating, setAnimating] = useState(false);
   const [direction, setDirection] = useState(0);
-  const tabOrder = ["chat", "quiz", "planner"];
+  const tabOrder = ["chat", "quiz", "planner", "chart"];
   useEffect(() => {
     if (activeTab !== prevTab) {
       const from = tabOrder.indexOf(prevTab),
@@ -795,131 +900,6 @@ function SmartQuestionDisplay({ question }) {
       </div>
     );
   }
-  if (isMatchingQuestion(question)) {
-    const { list1Items, list2Items } = parseInlineLists(question);
-    const questionText =
-      question.match(/(which of the following[^?]*\?|how many[^?]*\?)/i)?.[0] ||
-      "";
-    const list1Header =
-      question.match(/list[\s-]?i\s*\(([^)]+)\)/i)?.[1] || "List I";
-    const list2Header =
-      question.match(/list[\s-]?ii\s*\(([^)]+)\)/i)?.[1] || "List II";
-    if (list1Items.length > 0 && list2Items.length > 0) {
-      const maxRows = Math.max(list1Items.length, list2Items.length),
-        intro = question.split(/list[\s-]?i\b/i)[0].trim();
-      return (
-        <div>
-          {intro && (
-            <div
-              style={{
-                fontSize: "0.9rem",
-                color: "#fff",
-                lineHeight: 1.6,
-                fontWeight: 500,
-                marginBottom: 10,
-              }}
-            >
-              {intro}
-            </div>
-          )}
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              marginBottom: 10,
-              fontSize: "0.82rem",
-            }}
-          >
-            <thead>
-              <tr>
-                <td
-                  style={{
-                    background: "#1a3a2a",
-                    color: "#10a37f",
-                    padding: "7px 10px",
-                    border: "1px solid #10a37f40",
-                    fontWeight: 700,
-                    fontSize: "0.72rem",
-                  }}
-                >
-                  LIST I{list1Header !== "List I" ? ` (${list1Header})` : ""}
-                </td>
-                <td
-                  style={{
-                    background: "#1a2a3a",
-                    color: "#60a5fa",
-                    padding: "7px 10px",
-                    border: "1px solid #60a5fa40",
-                    fontWeight: 700,
-                    fontSize: "0.72rem",
-                  }}
-                >
-                  LIST II{list2Header !== "List II" ? ` (${list2Header})` : ""}
-                </td>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: maxRows }).map((_, i) => (
-                <tr key={i}>
-                  <td
-                    style={{
-                      padding: "8px 10px",
-                      border: "1px solid #2a2a2a",
-                      color: "#ddd",
-                      background: "#1e2e24",
-                      verticalAlign: "top",
-                    }}
-                  >
-                    <span
-                      style={{
-                        color: "#10a37f",
-                        fontWeight: 700,
-                        marginRight: 6,
-                      }}
-                    >
-                      {list1Items[i]?.label}
-                    </span>
-                    {list1Items[i]?.text}
-                  </td>
-                  <td
-                    style={{
-                      padding: "8px 10px",
-                      border: "1px solid #2a2a2a",
-                      color: "#ddd",
-                      background: "#1e242e",
-                      verticalAlign: "top",
-                    }}
-                  >
-                    <span
-                      style={{
-                        color: "#60a5fa",
-                        fontWeight: 700,
-                        marginRight: 6,
-                      }}
-                    >
-                      {list2Items[i]?.label}
-                    </span>
-                    {list2Items[i]?.text}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {questionText && (
-            <div
-              style={{
-                fontSize: "0.85rem",
-                color: "#bbb",
-                fontStyle: "italic",
-              }}
-            >
-              {questionText}
-            </div>
-          )}
-        </div>
-      );
-    }
-  }
   const formatQuestion = (text) =>
     text
       .replace(/(Consider the following statements?:?\s*)/gi, "$1\n")
@@ -1209,20 +1189,6 @@ function QuizScreen({ exam, API_URL }) {
                     />
                   </svg>
                 </div>
-                {selectedState && (
-                  <div
-                    style={{
-                      marginTop: 6,
-                      fontSize: "0.75rem",
-                      color: "#10a37f",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                    }}
-                  >
-                    ✓ {selectedState} selected
-                  </div>
-                )}
               </div>
             )}
             <div>
@@ -1241,8 +1207,7 @@ function QuizScreen({ exam, API_URL }) {
                 onChange={(e) => setTopic(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && startQuiz()}
                 placeholder={
-                  TOPIC_PLACEHOLDERS[exam] ||
-                  "e.g. Photosynthesis, Indian History..."
+                  TOPIC_PLACEHOLDERS[exam] || "e.g. Photosynthesis..."
                 }
                 style={{
                   width: "100%",
@@ -1257,36 +1222,6 @@ function QuizScreen({ exam, API_URL }) {
                 }}
               />
             </div>
-            {(exam === "CBSE 10th" || exam === "CBSE 12th") && (
-              <div
-                style={{
-                  background: "#10a37f10",
-                  border: "1px solid #10a37f30",
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                  fontSize: "0.78rem",
-                  color: "#10a37f",
-                }}
-              >
-                💡 All questions are strictly from NCERT{" "}
-                {exam === "CBSE 10th" ? "Class 10" : "Class 12"} syllabus
-              </div>
-            )}
-            {exam === "State PCS" && selectedState && (
-              <div
-                style={{
-                  background: "#fb923c10",
-                  border: "1px solid #fb923c30",
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                  fontSize: "0.78rem",
-                  color: "#fb923c",
-                }}
-              >
-                🗺️ 40% questions will be specific to{" "}
-                {selectedState.split(" ")[0]} · 60% general PCS topics
-              </div>
-            )}
             <div>
               <label
                 style={{
@@ -1348,23 +1283,8 @@ function QuizScreen({ exam, API_URL }) {
                 fontSize: "1rem",
                 fontWeight: 700,
                 cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
               }}
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="white"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              >
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
               Start Quiz
             </button>
           </div>
@@ -1393,11 +1313,7 @@ function QuizScreen({ exam, API_URL }) {
             <div
               style={{ color: "#888", fontSize: "0.9rem", textAlign: "center" }}
             >
-              Generating {count} questions on "{topic}"
-              {exam === "State PCS" && selectedState
-                ? ` for ${selectedState.split(" ")[0]}`
-                : ""}
-              ...
+              Generating {count} questions on "{topic}"...
             </div>
           </div>
         )}
@@ -1657,67 +1573,6 @@ function QuizScreen({ exam, API_URL }) {
                 </div>
               ))}
             </div>
-            {answers.some((a) => a.selected !== a.correct) && (
-              <div
-                style={{
-                  background: "#2a2a2a",
-                  borderRadius: 14,
-                  padding: 16,
-                  textAlign: "left",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "0.82rem",
-                    color: "#f59e0b",
-                    fontWeight: 700,
-                    marginBottom: 12,
-                  }}
-                >
-                  📋 Review Wrong Answers
-                </div>
-                {answers.map(
-                  (a, i) =>
-                    a.selected !== a.correct && (
-                      <div
-                        key={i}
-                        style={{
-                          marginBottom: 12,
-                          paddingBottom: 12,
-                          borderBottom: "1px solid #333",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: "0.82rem",
-                            color: "#ddd",
-                            marginBottom: 4,
-                          }}
-                        >
-                          Q{i + 1}:{" "}
-                          <SmartQuestionDisplay
-                            question={questions[i]?.question || ""}
-                          />
-                        </div>
-                        <div style={{ fontSize: "0.78rem", color: "#e53e3e" }}>
-                          ✗ You:{" "}
-                          {questions[i]?.options[a.selected]?.replace(
-                            /^[A-D]\)\s*/,
-                            ""
-                          )}
-                        </div>
-                        <div style={{ fontSize: "0.78rem", color: "#10a37f" }}>
-                          ✓ Correct:{" "}
-                          {questions[i]?.options[a.correct]?.replace(
-                            /^[A-D]\)\s*/,
-                            ""
-                          )}
-                        </div>
-                      </div>
-                    )
-                )}
-              </div>
-            )}
             <div style={{ display: "flex", gap: 10 }}>
               <button
                 onClick={() => {
@@ -2445,182 +2300,29 @@ function PlannerScreen({ exam, API_URL }) {
                               </span>
                             ))}
                           </div>
-                          <div
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 4,
-                            }}
-                          >
-                            <div style={{ fontSize: "0.78rem", color: "#888" }}>
-                              ⏱{" "}
-                              <span style={{ color: "#ddd" }}>
-                                {day.timeAllocation}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: "0.78rem", color: "#888" }}>
-                              📝{" "}
-                              <span style={{ color: "#ddd" }}>
-                                {day.practiceQuestions}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: "0.78rem", color: "#888" }}>
-                              💡{" "}
-                              <span style={{ color: "#aaa" }}>
-                                {day.revisionTip}
-                              </span>
-                            </div>
+                          <div style={{ fontSize: "0.78rem", color: "#888" }}>
+                            ⏱{" "}
+                            <span style={{ color: "#ddd" }}>
+                              {day.timeAllocation}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "0.78rem", color: "#888" }}>
+                            📝{" "}
+                            <span style={{ color: "#ddd" }}>
+                              {day.practiceQuestions}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "0.78rem", color: "#888" }}>
+                            💡{" "}
+                            <span style={{ color: "#aaa" }}>
+                              {day.revisionTip}
+                            </span>
                           </div>
                         </div>
                       </div>
                     </div>
                   );
                 })}
-              </div>
-            )}
-            {viewMode === "week" && (
-              <div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: 14,
-                  }}
-                >
-                  <button
-                    onClick={() => setCurrentWeek((w) => Math.max(0, w - 1))}
-                    disabled={currentWeek === 0}
-                    style={{
-                      background: "#2a2a2a",
-                      border: "1px solid #3a3a3a",
-                      borderRadius: 8,
-                      padding: "6px 12px",
-                      color: currentWeek === 0 ? "#444" : "#ddd",
-                      cursor: currentWeek === 0 ? "not-allowed" : "pointer",
-                      fontSize: "0.82rem",
-                    }}
-                  >
-                    ← Prev
-                  </button>
-                  <span
-                    style={{
-                      fontSize: "0.85rem",
-                      color: "#ddd",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Week {currentWeek + 1} of {totalWeeks}
-                  </span>
-                  <button
-                    onClick={() =>
-                      setCurrentWeek((w) => Math.min(totalWeeks - 1, w + 1))
-                    }
-                    disabled={currentWeek === totalWeeks - 1}
-                    style={{
-                      background: "#2a2a2a",
-                      border: "1px solid #3a3a3a",
-                      borderRadius: 8,
-                      padding: "6px 12px",
-                      color: currentWeek === totalWeeks - 1 ? "#444" : "#ddd",
-                      cursor:
-                        currentWeek === totalWeeks - 1
-                          ? "not-allowed"
-                          : "pointer",
-                      fontSize: "0.82rem",
-                    }}
-                  >
-                    Next →
-                  </button>
-                </div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(7,1fr)",
-                    gap: 6,
-                  }}
-                >
-                  {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
-                    (d) => (
-                      <div
-                        key={d}
-                        style={{
-                          textAlign: "center",
-                          fontSize: "0.65rem",
-                          color: "#555",
-                          paddingBottom: 6,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {d}
-                      </div>
-                    )
-                  )}
-                  {daysInWeek.map((day, i) => {
-                    const isToday = day.date === today;
-                    return (
-                      <div
-                        key={i}
-                        onClick={() => toggleDay(plan.days.indexOf(day))}
-                        style={{
-                          background: day.completed
-                            ? "#10a37f20"
-                            : isToday
-                            ? "#f59e0b15"
-                            : "#2a2a2a",
-                          border: `1px solid ${
-                            day.completed
-                              ? "#10a37f50"
-                              : isToday
-                              ? "#f59e0b50"
-                              : "#333"
-                          }`,
-                          borderRadius: 10,
-                          padding: "10px 6px",
-                          textAlign: "center",
-                          cursor: "pointer",
-                          minHeight: 80,
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: "0.65rem",
-                            color: "#666",
-                            marginBottom: 4,
-                          }}
-                        >
-                          Day {day.day}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: "0.72rem",
-                            color: day.completed ? "#10a37f" : "#ddd",
-                            fontWeight: 600,
-                            lineHeight: 1.3,
-                          }}
-                        >
-                          {day.focus?.slice(0, 20)}
-                          {day.focus?.length > 20 ? "..." : ""}
-                        </div>
-                        {day.completed && (
-                          <div style={{ fontSize: 14, marginTop: 4 }}>✅</div>
-                        )}
-                        {isToday && !day.completed && (
-                          <div
-                            style={{
-                              fontSize: "0.6rem",
-                              color: "#f59e0b",
-                              marginTop: 4,
-                              fontWeight: 700,
-                            }}
-                          >
-                            TODAY
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
             )}
             <div style={{ marginTop: 20 }}>
@@ -2670,7 +2372,7 @@ function PlannerScreen({ exam, API_URL }) {
             </div>
             {savedPlans.length === 0 ? (
               <div style={{ textAlign: "center", color: "#555", padding: 40 }}>
-                No saved plans yet. Create your first plan!
+                No saved plans yet.
               </div>
             ) : (
               savedPlans.map((p) => {
@@ -2783,6 +2485,241 @@ function PlannerScreen({ exam, API_URL }) {
   );
 }
 
+// ── IMAGE COMPONENT ───────────────────────────────────────────────────────────
+function ImageComponent({ src, alt, onRegenerate, onZoom }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [sourceIndex, setSourceIndex] = useState(0);
+
+  const fallbackSources = useMemo(() => {
+    const candidates = [];
+    if (typeof src === "string" && src.trim()) candidates.push(src.trim());
+    if (typeof alt === "string" && alt.trim()) {
+      for (const url of buildPollinationsCandidates(alt.trim())) {
+        if (!candidates.includes(url)) candidates.push(url);
+      }
+    }
+    return candidates;
+  }, [src, alt]);
+
+  const activeSrc = fallbackSources[sourceIndex] || src;
+
+  useEffect(() => {
+    setSourceIndex(0);
+    setLoading(true);
+    setError(false);
+  }, [src, alt]);
+
+  const handleDownload = async () => {
+    try {
+      const response = await fetch(activeSrc);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `examai-${Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      window.open(activeSrc, "_blank");
+    }
+  };
+
+  const handleShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "ExamAI Image", text: alt, url: activeSrc });
+      } catch (err) {}
+    } else {
+      try {
+        await navigator.clipboard.writeText(activeSrc);
+        alert("Image URL copied to clipboard!");
+      } catch (e) {
+        alert("Failed to copy URL");
+      }
+    }
+  };
+
+  const handleRegenerate = () => {
+    if (onRegenerate) onRegenerate(alt);
+  };
+
+  return (
+    <div style={{ margin: "12px 0", maxWidth: "100%" }}>
+      <div
+        style={{
+          position: "relative",
+          minHeight: 240,
+          background: "#1a1a1a",
+          borderRadius: 12,
+          overflow: "hidden",
+          border: "1px solid #333",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {loading && !error && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1,
+            }}
+          >
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                border: "3px solid #444",
+                borderTopColor: "#10a37f",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+              }}
+            />
+          </div>
+        )}
+        <img
+          src={activeSrc}
+          alt={alt}
+          onLoad={() => setLoading(false)}
+          onClick={() => onZoom?.(activeSrc)}
+          onError={() => {
+            const nextIndex = sourceIndex + 1;
+            if (nextIndex < fallbackSources.length) {
+              setSourceIndex(nextIndex);
+              setLoading(true);
+              setError(false);
+              return;
+            }
+            setLoading(false);
+            setError(true);
+          }}
+          style={{
+            maxWidth: "100%",
+            display: loading ? "none" : "block",
+            borderRadius: 12,
+            objectFit: "contain",
+            cursor: onZoom ? "zoom-in" : "default",
+          }}
+        />
+        {error && (
+          <div style={{ color: "#e53e3e", fontSize: "0.85rem" }}>
+            ⚠️ Failed to load image
+          </div>
+        )}
+      </div>
+      {!loading && !error && (
+        <div
+          style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}
+        >
+          <button
+            onClick={handleDownload}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: "#2a2a2a",
+              border: "1px solid #3a3a3a",
+              borderRadius: 8,
+              padding: "8px 12px",
+              color: "#ececec",
+              fontSize: "0.78rem",
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download
+          </button>
+          <button
+            onClick={handleShare}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: "#2a2a2a",
+              border: "1px solid #3a3a3a",
+              borderRadius: 8,
+              padding: "8px 12px",
+              color: "#ececec",
+              fontSize: "0.78rem",
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+            Share
+          </button>
+          <button
+            onClick={handleRegenerate}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: "#2a2a2a",
+              border: "1px solid #3a3a3a",
+              borderRadius: 8,
+              padding: "8px 12px",
+              color: "#ececec",
+              fontSize: "0.78rem",
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
+            </svg>
+            Regenerate
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── CHAT SCREEN ───────────────────────────────────────────────────────────────
 function ChatScreen({ exam, onChangeExam, API_URL }) {
   const [messages, setMessages] = useState([]);
@@ -2798,10 +2735,9 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   const [currentChatId, setCurrentChatId] = useState(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [loadingChats, setLoadingChats] = useState(false);
-
-  // ── NEW: pending file states ──
   const [pendingFile, setPendingFile] = useState(null);
   const [filePrompt, setFilePrompt] = useState("");
+  const [selectedImage, setSelectedImage] = useState(null);
 
   const messagesEndRef = useRef(null),
     textareaRef = useRef(null),
@@ -2920,6 +2856,25 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       { role: "user", content: text },
       { role: "assistant", content: "" },
     ]);
+
+    // ── POLLINATIONS.AI IMAGE GENERATION ──────────────────────────────────────
+    const imagePrompt = extractImagePrompt(text);
+    if (imagePrompt) {
+      const prompt = imagePrompt;
+      const imageUrl = await resolvePollinationsUrl(prompt, API_URL);
+      const safePrompt = escapeMarkdownAlt(prompt);
+      const content = imageUrl
+        ? `![${safePrompt}](${imageUrl})`
+        : "⚠️ Could not generate image right now. Please try again.";
+      setMessages((p) => {
+        const updated = [...p];
+        updated[updated.length - 1].content = content;
+        return updated;
+      });
+      setLoading(false);
+      return;
+    }
+
     const history = buildHistory([
       ...previousMessages,
       { role: "user", content: text },
@@ -2960,25 +2915,21 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     await sendMessageWithText(input.trim(), false);
   };
 
-  // ── CHANGE 1: just store the file, show preview + prompt box ──
   const handleFileUpload = (file) => {
     if (!file || loading) return;
     setPendingFile(file);
     setShowAttachMenu(false);
   };
 
-  // ── CHANGE 2: send file + optional prompt together ──
   const sendFileWithPrompt = async () => {
     if (!pendingFile || loading) return;
-    const file = pendingFile;
-    const prompt = filePrompt.trim();
+    const file = pendingFile,
+      prompt = filePrompt.trim();
     const isPdf = file.type === "application/pdf";
     const imageUrl = isPdf ? null : URL.createObjectURL(file);
-
     setPendingFile(null);
     setFilePrompt("");
     setLoading(true);
-
     let activeChatId = currentChatIdRef.current;
     if (!activeChatId) {
       activeChatId = await createNewChat(exam);
@@ -2987,8 +2938,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         return;
       }
     }
-
-    // ── CHANGE 3: store imageUrl for chat bubble preview ──
     setMessages((p) => [
       ...p,
       {
@@ -2999,14 +2948,12 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       },
       { role: "assistant", content: "" },
     ]);
-
     try {
       const formData = new FormData();
       formData.append("image", file);
       formData.append("exam", exam);
       formData.append("chatId", activeChatId);
       if (prompt) formData.append("prompt", prompt);
-
       const res = await fetch(`${API_URL}/image`, {
         method: "POST",
         body: formData,
@@ -3139,6 +3086,24 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       mediaRecorderRef.current = null;
     }
   };
+
+  // ✅ FIX: Override p tag to prevent <div> nested inside <p> error
+  const markdownComponents = useMemo(
+    () => ({
+      p: ({ children }) => <div style={{ margin: "4px 0" }}>{children}</div>,
+      img: ({ src, alt }) => (
+        <ImageComponent
+          src={src}
+          alt={alt}
+          onRegenerate={(prompt) =>
+            sendMessageWithText(`Generate image of ${prompt}`)
+          }
+          onZoom={setSelectedImage}
+        />
+      ),
+    }),
+    []
+  );
 
   const formatDate = (dateStr) => {
     const date = new Date(dateStr),
@@ -3659,6 +3624,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 {[
                   "📚 Explain Newton's Laws of Motion",
                   "🇮🇳 What is the Preamble of Indian Constitution?",
+                  "🎨 Generate image of a futuristic study room",
                   "🔢 Solve: If 2x + 3 = 11, find x",
                   "📝 Key topics I should study today",
                 ].map((s, i) => (
@@ -3701,7 +3667,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                         padding: "4px 14px",
                       }}
                     >
-                      {/* ── IMAGE PREVIEW in user bubble ── */}
                       <div
                         style={{
                           background: "#2f2f2f",
@@ -3808,7 +3773,9 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                               wordBreak: "break-word",
                             }}
                           >
-                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                            <ReactMarkdown components={markdownComponents}>
+                              {msg.content}
+                            </ReactMarkdown>
                             {loading &&
                               i === messages.length - 1 &&
                               msg.content !== "" && (
@@ -3842,7 +3809,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
             borderTop: isEmpty ? "none" : "1px solid #2a2a2a",
           }}
         >
-          {/* ── FILE PREVIEW + PROMPT BOX ── */}
           {pendingFile && (
             <div
               style={{
@@ -3932,7 +3898,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               </button>
             </div>
           )}
-
           {isListening && (
             <div
               style={{
@@ -3945,7 +3910,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               🎤 Recording... release to send
             </div>
           )}
-
           <div
             style={{
               display: "flex",
@@ -3958,7 +3922,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               transition: "border-color 0.2s",
             }}
           >
-            {/* ── PAPERCLIP ICON (Change 1) ── */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -3992,7 +3955,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
-
             <input
               ref={fileInputRef}
               type="file"
@@ -4024,7 +3986,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 e.target.value = "";
               }}
             />
-
             <button
               onMouseDown={startListening}
               onMouseUp={stopListening}
@@ -4069,7 +4030,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 <line x1="8" y1="23" x2="16" y2="23" />
               </svg>
             </button>
-
             {isSpeaking && (
               <button
                 onClick={stopSpeaking}
@@ -4092,7 +4052,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 </svg>
               </button>
             )}
-
             <textarea
               ref={textareaRef}
               value={input}
@@ -4122,7 +4081,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 fontSize: 16,
               }}
             />
-
             <button
               onClick={sendMessage}
               disabled={loading || !input.trim()}
@@ -4185,80 +4143,14 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       {showAttachMenu && (
         <>
           <style>{`
-      @keyframes attachBackdropIn {
-        from { opacity: 0; }
-        to   { opacity: 1; }
-      }
-      @keyframes attachSheetIn {
-        from { transform: translateY(100%) scale(0.97); opacity: 0; }
-        to   { transform: translateY(0)    scale(1);    opacity: 1; }
-      }
-      @keyframes attachCardIn {
-        from { opacity: 0; transform: translateY(14px) scale(0.95); }
-        to   { opacity: 1; transform: translateY(0)    scale(1);    }
-      }
-      @keyframes shimmer {
-        0%   { background-position: -200% center; }
-        100% { background-position:  200% center; }
-      }
-      .attach-card {
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 10px;
-        padding: 16px 14px 14px;
-        border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.07);
-        background: rgba(255,255,255,0.04);
-        cursor: pointer;
-        transition: transform 0.22s cubic-bezier(0.34,1.56,0.64,1),
-                    background 0.18s ease,
-                    border-color 0.18s ease,
-                    box-shadow 0.22s ease;
-        -webkit-tap-highlight-color: transparent;
-        overflow: hidden;
-        backdrop-filter: blur(12px);
-      }
-      .attach-card:active {
-        transform: scale(0.93) !important;
-      }
-      .attach-card::before {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 60%);
-        pointer-events: none;
-      }
-      .attach-card:hover {
-        background: rgba(255,255,255,0.08);
-        border-color: rgba(255,255,255,0.14);
-        box-shadow: 0 8px 32px rgba(0,0,0,0.35);
-        transform: translateY(-2px);
-      }
-      .attach-icon-wrap {
-        width: 42px;
-        height: 42px;
-        border-radius: 13px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        position: relative;
-      }
-      .attach-icon-wrap::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        opacity: 0.35;
-        filter: blur(8px);
-        transform: translateY(4px) scale(0.85);
-      }
-    `}</style>
-
-          {/* Backdrop */}
+            @keyframes attachBackdropIn{from{opacity:0}to{opacity:1}}
+            @keyframes attachSheetIn{from{transform:translateY(100%) scale(0.97);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+            @keyframes attachCardIn{from{opacity:0;transform:translateY(14px) scale(0.95)}to{opacity:1;transform:translateY(0) scale(1)}}
+            .attach-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px 14px 14px;border-radius:18px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.04);cursor:pointer;transition:transform 0.22s cubic-bezier(0.34,1.56,0.64,1),background 0.18s ease;-webkit-tap-highlight-color:transparent;overflow:hidden;backdrop-filter:blur(12px);}
+            .attach-card:active{transform:scale(0.93)!important;}
+            .attach-card:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.14);box-shadow:0 8px 32px rgba(0,0,0,0.35);transform:translateY(-2px);}
+            .attach-icon-wrap{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+          `}</style>
           <div
             onClick={() => setShowAttachMenu(false)}
             style={{
@@ -4271,8 +4163,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               animation: "attachBackdropIn 0.25s ease both",
             }}
           />
-
-          {/* Sheet */}
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
@@ -4281,15 +4171,14 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               left: 0,
               right: 0,
               zIndex: 201,
-              background: "linear-gradient(180deg, #1c1c1e 0%, #141416 100%)",
+              background: "linear-gradient(180deg,#1c1c1e 0%,#141416 100%)",
               borderRadius: "26px 26px 0 0",
               padding: "0 0 calc(28px + env(safe-area-inset-bottom))",
               animation: "attachSheetIn 0.35s cubic-bezier(0.32,0.72,0,1) both",
               boxShadow:
-                "0 -1px 0 rgba(255,255,255,0.07), 0 -24px 60px rgba(0,0,0,0.7)",
+                "0 -1px 0 rgba(255,255,255,0.07),0 -24px 60px rgba(0,0,0,0.7)",
             }}
           >
-            {/* Top handle + header */}
             <div style={{ padding: "12px 20px 18px" }}>
               <div
                 style={{
@@ -4353,8 +4242,6 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 </button>
               </div>
             </div>
-
-            {/* 3-card grid */}
             <div
               style={{
                 display: "grid",
@@ -4363,179 +4250,115 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                 padding: "0 14px",
               }}
             >
-              {/* Take a Photo */}
-              <button
-                className="attach-card"
-                onClick={() => {
-                  cameraInputRef.current.click();
-                  setShowAttachMenu(false);
-                }}
-                style={{
-                  animation:
-                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.05s both",
-                }}
-              >
-                <div
-                  className="attach-icon-wrap"
+              {[
+                {
+                  label: "Camera",
+                  desc: "Take a photo",
+                  bg: "linear-gradient(135deg,#ff6b35,#ff3a6e)",
+                  ref: cameraInputRef,
+                  icon: (
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
+                    </svg>
+                  ),
+                },
+                {
+                  label: "Gallery",
+                  desc: "Pick image",
+                  bg: "linear-gradient(135deg,#7c3aed,#4f46e5)",
+                  ref: fileInputRef,
+                  icon: (
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="3" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  ),
+                },
+                {
+                  label: "PDF",
+                  desc: "Upload doc",
+                  bg: "linear-gradient(135deg,#059669,#10b981)",
+                  ref: pdfInputRef,
+                  icon: (
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                    </svg>
+                  ),
+                },
+              ].map(({ label, desc, bg, ref, icon }, idx) => (
+                <button
+                  key={label}
+                  className="attach-card"
+                  onClick={() => {
+                    ref.current.click();
+                    setShowAttachMenu(false);
+                  }}
                   style={{
-                    background: "linear-gradient(135deg, #ff6b35, #ff3a6e)",
+                    animation: `attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) ${
+                      0.05 + idx * 0.06
+                    }s both`,
                   }}
                 >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#fff"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                    <circle cx="12" cy="13" r="4" />
-                  </svg>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      fontWeight: 700,
-                      color: "#fff",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    Camera
+                  <div className="attach-icon-wrap" style={{ background: bg }}>
+                    {icon}
                   </div>
-                  <div
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "#555",
-                      marginTop: 3,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    Take a photo
+                  <div>
+                    <div
+                      style={{
+                        fontSize: "0.8rem",
+                        fontWeight: 700,
+                        color: "#fff",
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {label}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.65rem",
+                        color: "#555",
+                        marginTop: 3,
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {desc}
+                    </div>
                   </div>
-                </div>
-              </button>
-
-              {/* Gallery */}
-              <button
-                className="attach-card"
-                onClick={() => {
-                  fileInputRef.current.click();
-                  setShowAttachMenu(false);
-                }}
-                style={{
-                  animation:
-                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.11s both",
-                }}
-              >
-                <div
-                  className="attach-icon-wrap"
-                  style={{
-                    background: "linear-gradient(135deg, #7c3aed, #4f46e5)",
-                  }}
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#fff"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="3" width="18" height="18" rx="3" />
-                    <circle cx="8.5" cy="8.5" r="1.5" />
-                    <polyline points="21 15 16 10 5 21" />
-                  </svg>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      fontWeight: 700,
-                      color: "#fff",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    Gallery
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "#555",
-                      marginTop: 3,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    Pick image
-                  </div>
-                </div>
-              </button>
-
-              {/* PDF */}
-              <button
-                className="attach-card"
-                onClick={() => {
-                  pdfInputRef.current.click();
-                  setShowAttachMenu(false);
-                }}
-                style={{
-                  animation:
-                    "attachCardIn 0.38s cubic-bezier(0.34,1.56,0.64,1) 0.17s both",
-                }}
-              >
-                <div
-                  className="attach-icon-wrap"
-                  style={{
-                    background: "linear-gradient(135deg, #059669, #10b981)",
-                  }}
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#fff"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" y1="13" x2="8" y2="13" />
-                    <line x1="16" y1="17" x2="8" y2="17" />
-                  </svg>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      fontWeight: 700,
-                      color: "#fff",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    PDF
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.65rem",
-                      color: "#555",
-                      marginTop: 3,
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    Upload doc
-                  </div>
-                </div>
-              </button>
+                </button>
+              ))}
             </div>
-
-            {/* Subtle tip row */}
             <div
               style={{
                 margin: "16px 14px 0",
@@ -4585,6 +4408,63 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
           </div>
         </>
       )}
+
+      {/* IMAGE ZOOM */}
+      {selectedImage && (
+        <div
+          onClick={() => setSelectedImage(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(0,0,0,0.92)",
+            backdropFilter: "blur(10px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            animation: "fadeIn 0.3s cubic-bezier(0.16,1,0.3,1)",
+            cursor: "zoom-out",
+          }}
+        >
+          <img
+            src={selectedImage}
+            alt="Full screen"
+            style={{
+              maxWidth: "95%",
+              maxHeight: "95%",
+              borderRadius: 8,
+              boxShadow: "0 24px 48px rgba(0,0,0,0.5)",
+              objectFit: "contain",
+              cursor: "default",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setSelectedImage(null)}
+            style={{
+              position: "absolute",
+              top: 20,
+              right: 20,
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              background: "rgba(255,255,255,0.1)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              color: "#fff",
+              fontSize: 24,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              backdropFilter: "blur(4px)",
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* TOAST */}
       {toast && (
         <div
           style={{
@@ -4610,15 +4490,528 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
   );
 }
 
+// ── CHART RENDERER ────────────────────────────────────────────────────────────
+function ChartRenderer({ chartData }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !chartData || chartData.type === "text") return;
+    if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+    const COLORS = [
+      "#10a37f",
+      "#3b82f6",
+      "#f59e0b",
+      "#ec4899",
+      "#8b5cf6",
+      "#06b6d4",
+      "#f97316",
+      "#84cc16",
+    ];
+    const datasets = chartData.data.datasets.map((ds, i) => {
+      const color = ds.color || COLORS[i % COLORS.length];
+      const isPie = ["pie", "doughnut"].includes(chartData.chartType);
+      return {
+        label: ds.label,
+        data: ds.data,
+        backgroundColor: isPie
+          ? chartData.data.labels.map(
+              (_, j) => COLORS[j % COLORS.length] + "cc"
+            )
+          : color + "33",
+        borderColor: isPie
+          ? chartData.data.labels.map((_, j) => COLORS[j % COLORS.length])
+          : color,
+        borderWidth: 2,
+        borderRadius: chartData.chartType === "bar" ? 6 : 0,
+        fill: chartData.chartType === "line",
+        tension: 0.4,
+        pointBackgroundColor: color,
+        pointRadius: chartData.chartType === "line" ? 4 : 0,
+        pointHoverRadius: 6,
+      };
+    });
+    const ctx = canvasRef.current.getContext("2d");
+    chartRef.current = new window.Chart(ctx, {
+      type: chartData.chartType,
+      data: { labels: chartData.data.labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 600, easing: "easeInOutQuart" },
+        plugins: {
+          legend: {
+            display:
+              datasets.length > 1 ||
+              ["pie", "doughnut"].includes(chartData.chartType),
+            labels: {
+              color: "#ccc",
+              font: { family: "'Figtree', sans-serif", size: 11 },
+              padding: 14,
+              usePointStyle: true,
+            },
+          },
+          tooltip: {
+            backgroundColor: "#1e1e1e",
+            titleColor: "#fff",
+            bodyColor: "#ccc",
+            borderColor: "#3a3a3a",
+            borderWidth: 1,
+            padding: 10,
+          },
+        },
+        scales: ["pie", "doughnut"].includes(chartData.chartType)
+          ? {}
+          : {
+              x: {
+                ticks: {
+                  color: "#888",
+                  font: { family: "'Figtree', sans-serif", size: 10 },
+                  maxRotation: 45,
+                },
+                grid: { color: "#2a2a2a" },
+              },
+              y: {
+                ticks: {
+                  color: "#888",
+                  font: { family: "'Figtree', sans-serif", size: 10 },
+                },
+                grid: { color: "#2a2a2a" },
+              },
+            },
+      },
+    });
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
+    };
+  }, [chartData]);
+
+  if (!chartData || chartData.type === "text") return null;
+
+  return (
+    <div
+      style={{
+        background: "#2a2a2a",
+        borderRadius: 16,
+        padding: "16px",
+        marginBottom: 16,
+        border: "1px solid #3a3a3a",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.92rem",
+          fontWeight: 700,
+          color: "#fff",
+          marginBottom: 4,
+        }}
+      >
+        {chartData.title}
+      </div>
+      <div style={{ height: 280, position: "relative", marginBottom: 12 }}>
+        <canvas ref={canvasRef} />
+      </div>
+      {chartData.description && (
+        <div
+          style={{
+            fontSize: "0.8rem",
+            color: "#999",
+            lineHeight: 1.6,
+            marginBottom: 8,
+            padding: "10px 12px",
+            background: "#10a37f10",
+            borderRadius: 8,
+            border: "1px solid #10a37f20",
+          }}
+        >
+          💡 {chartData.description}
+        </div>
+      )}
+      {chartData.source && (
+        <div style={{ fontSize: "0.7rem", color: "#555", textAlign: "right" }}>
+          Source: {chartData.source}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CHART SCREEN ──────────────────────────────────────────────────────────────
+function ChartScreen({ exam, API_URL }) {
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [chartData, setChartData] = useState(null);
+  const [textAnswer, setTextAnswer] = useState("");
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState([]);
+
+  const SUGGESTIONS = {
+    UPSC: [
+      "India GDP growth rate 2015 to 2023",
+      "Union Budget 2024 sector allocation",
+      "Literacy rate of top 5 Indian states",
+      "India's exports by category 2023",
+      "BRICS countries GDP comparison",
+    ],
+    JEE: [
+      "Velocity time graph for uniform acceleration",
+      "Boyle's law pressure volume relationship",
+      "Projectile motion trajectory",
+      "Radioactive decay curve",
+      "Carnot cycle efficiency vs temperature",
+    ],
+    NEET: [
+      "Human population growth curve",
+      "Enzyme activity vs pH graph",
+      "Logistic vs exponential growth",
+      "Absorption spectrum of chlorophyll",
+      "Blood pressure in different vessels",
+    ],
+    "Current Affairs": [
+      "India inflation rate 2022 to 2024",
+      "Top 5 countries by renewable energy",
+      "India FDI inflows 2020 to 2024",
+      "Global temperature rise 1990 to 2024",
+      "Digital India internet users growth",
+    ],
+    General: [
+      "India GDP growth last 10 years",
+      "Population of G7 countries",
+      "Global CO2 emissions by country",
+      "India's state wise population 2011",
+      "Top 5 economies by GDP 2024",
+    ],
+  };
+  const suggestions = SUGGESTIONS[exam] || SUGGESTIONS["General"];
+
+  const generate = async (q) => {
+    const question = q || query;
+    if (!question.trim()) return;
+    setLoading(true);
+    setError("");
+    setChartData(null);
+    setTextAnswer("");
+    try {
+      const res = await fetch(`${API_URL}/chart/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, exam }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (data.type === "text") {
+        setTextAnswer(data.answer);
+      } else {
+        setChartData(data);
+        setHistory((prev) => [
+          { query: question, chartData: data },
+          ...prev.slice(0, 4),
+        ]);
+      }
+    } catch (err) {
+      setError("Failed to generate chart. Try a different question.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        background: "#212121",
+        color: "#ececec",
+        fontFamily: "'Figtree', sans-serif",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "12px 16px",
+          borderBottom: "1px solid #2a2a2a",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
+          📊 Charts & Graphs
+        </div>
+        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && generate()}
+            placeholder="e.g. India GDP growth 2015 to 2023..."
+            style={{
+              flex: 1,
+              padding: "11px 14px",
+              background: "#2a2a2a",
+              border: "1px solid #3a3a3a",
+              borderRadius: 10,
+              color: "#ececec",
+              fontSize: "0.9rem",
+              outline: "none",
+              fontFamily: "'Figtree', sans-serif",
+            }}
+          />
+          <button
+            onClick={() => generate()}
+            disabled={loading || !query.trim()}
+            style={{
+              padding: "11px 16px",
+              background: loading || !query.trim() ? "#2a2a2a" : "#10a37f",
+              border: "none",
+              borderRadius: 10,
+              color: loading || !query.trim() ? "#555" : "#fff",
+              fontWeight: 600,
+              cursor: loading || !query.trim() ? "not-allowed" : "pointer",
+              fontSize: "0.9rem",
+              flexShrink: 0,
+            }}
+          >
+            {loading ? "..." : "Go"}
+          </button>
+        </div>
+        {!chartData && !textAnswer && !loading && (
+          <>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#555",
+                marginBottom: 10,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}
+            >
+              Try these for {exam}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                marginBottom: 20,
+              }}
+            >
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setQuery(s);
+                    generate(s);
+                  }}
+                  style={{
+                    padding: "11px 14px",
+                    background: "#2a2a2a",
+                    border: "1px solid #333",
+                    borderRadius: 10,
+                    color: "#ddd",
+                    fontSize: "0.85rem",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "'Figtree', sans-serif",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ color: "#10a37f" }}>📈</span> {s}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {loading && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              height: 200,
+              gap: 14,
+            }}
+          >
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                border: "3px solid #2a2a2a",
+                borderTopColor: "#10a37f",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+              }}
+            />
+            <div style={{ color: "#666", fontSize: "0.85rem" }}>
+              Generating chart...
+            </div>
+          </div>
+        )}
+        {error && (
+          <div
+            style={{
+              background: "#e53e3e15",
+              border: "1px solid #e53e3e40",
+              borderRadius: 10,
+              padding: "12px 14px",
+              color: "#e53e3e",
+              fontSize: "0.85rem",
+              marginBottom: 16,
+            }}
+          >
+            {error}
+          </div>
+        )}
+        {chartData && !loading && (
+          <>
+            <ChartRenderer chartData={chartData} />
+            <button
+              onClick={() => {
+                setChartData(null);
+                setQuery("");
+              }}
+              style={{
+                width: "100%",
+                padding: 12,
+                background: "#2a2a2a",
+                border: "1px solid #3a3a3a",
+                borderRadius: 10,
+                color: "#ddd",
+                fontSize: "0.88rem",
+                cursor: "pointer",
+                marginBottom: 20,
+              }}
+            >
+              New Chart
+            </button>
+          </>
+        )}
+        {textAnswer && !loading && (
+          <div
+            style={{
+              background: "#2a2a2a",
+              borderRadius: 12,
+              padding: "14px 16px",
+              marginBottom: 16,
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#10a37f",
+                fontWeight: 700,
+                marginBottom: 8,
+                textTransform: "uppercase",
+                letterSpacing: 0.8,
+              }}
+            >
+              💬 Text Answer
+            </div>
+            <div
+              style={{ fontSize: "0.88rem", color: "#ddd", lineHeight: 1.7 }}
+            >
+              {textAnswer}
+            </div>
+            <button
+              onClick={() => {
+                setTextAnswer("");
+                setQuery("");
+              }}
+              style={{
+                marginTop: 12,
+                padding: "8px 14px",
+                background: "transparent",
+                border: "1px solid #3a3a3a",
+                borderRadius: 8,
+                color: "#888",
+                fontSize: "0.82rem",
+                cursor: "pointer",
+              }}
+            >
+              Try another
+            </button>
+          </div>
+        )}
+        {history.length > 0 && !chartData && !textAnswer && !loading && (
+          <>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#555",
+                marginBottom: 10,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}
+            >
+              Recent
+            </div>
+            {history.map((h, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setChartData(h.chartData);
+                  setQuery(h.query);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  background: "#2a2a2a",
+                  border: "1px solid #333",
+                  borderRadius: 10,
+                  color: "#ddd",
+                  fontSize: "0.85rem",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: "'Figtree', sans-serif",
+                  marginBottom: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <span>📊</span>
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {h.query}
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function App() {
   if (window.location.pathname === "/delete-account") {
     return <DeleteAccount />;
   }
+
   const [appState, setAppState] = useState("splash");
-  const [exam, setExam] = useState("");
+  const [exam, setExam] = useState(localStorage.getItem("examai_exam") || "");
   const [activeTab, setActiveTab] = useState("chat");
-  const API_URL = import.meta.env.VITE_API_URL;
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5050";
 
   const GLOBAL_STYLES = `
     @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&display=swap');
@@ -4634,6 +5027,7 @@ export default function App() {
     .msg-content h1,.msg-content h2,.msg-content h3{margin:14px 0 6px;color:#fff;font-weight:600;}
     .msg-content blockquote{border-left:3px solid #10a37f;padding-left:12px;color:#aaa;margin:8px 0;}
     .msg-content table{width:100%;border-collapse:collapse;margin:10px 0;font-size:0.85rem;}
+    .msg-content img{max-width:100%;border-radius:12px;margin:10px 0;box-shadow:0 4px 20px rgba(0,0,0,0.3);}
     .msg-content th{background:#2a2a2a;color:#fff;padding:8px 12px;text-align:left;border:1px solid #3a3a3a;}
     .msg-content td{padding:7px 12px;border:1px solid #2a2a2a;color:#ddd;}
     .msg-content tr:nth-child(even) td{background:#1e1e1e;}
@@ -4642,7 +5036,6 @@ export default function App() {
     @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
     @keyframes spin{to{transform:rotate(360deg)}}
     @keyframes dotPulse{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
-    @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
     .dot1{animation:dotPulse 1s ease-in-out infinite;}.dot2{animation:dotPulse 1s ease-in-out 0.15s infinite;}.dot3{animation:dotPulse 1s ease-in-out 0.3s infinite;}
     select option{background:#2a2a2a;color:#ececec;}
   `;
@@ -4652,6 +5045,7 @@ export default function App() {
     setExam(e);
     setAppState("main");
   };
+
   const handleChangeExam = (e) => {
     localStorage.setItem("examai_exam", e);
     setExam(e);
@@ -4661,9 +5055,18 @@ export default function App() {
     return (
       <>
         <style>{GLOBAL_STYLES}</style>
-        <SplashScreen onDone={() => setAppState("exam-select")} />
+        <SplashScreen
+          onDone={() => {
+            const savedExam = localStorage.getItem("examai_exam");
+            if (savedExam) {
+              setExam(savedExam);
+              setAppState("main");
+            } else setAppState("exam-select");
+          }}
+        />
       </>
     );
+
   if (appState === "exam-select")
     return (
       <>
@@ -4740,594 +5143,6 @@ export default function App() {
         }}
       />
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
-    </div>
-  );
-}
-// ── CHART RENDERER COMPONENT ──────────────────────────────────────────────────
-// 1. Add this import at the top of App.jsx:
-//    import { useEffect, useRef, useState } from "react";
-//
-// 2. Add Chart.js CDN in your index.html <head>:
-//    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-//
-// 3. Paste the ChartRenderer component and ChartScreen component below into App.jsx
-//
-// 4. Add "chart" to your tabs in App.jsx:
-//    tabs={{ chat: ..., quiz: ..., planner: ..., chart: <ChartScreen exam={exam} API_URL={API_URL} /> }}
-//
-// 5. Add chart tab to TabBar:
-//    { id: "chart", icon: "📊", label: "Charts" }
-
-// ── CHART RENDERER ────────────────────────────────────────────────────────────
-function ChartRenderer({ chartData }) {
-  const canvasRef = useRef(null);
-  const chartRef = useRef(null);
-
-  useEffect(() => {
-    if (!canvasRef.current || !chartData || chartData.type === "text") return;
-
-    // Destroy existing chart
-    if (chartRef.current) {
-      chartRef.current.destroy();
-      chartRef.current = null;
-    }
-
-    const COLORS = [
-      "#10a37f",
-      "#3b82f6",
-      "#f59e0b",
-      "#ec4899",
-      "#8b5cf6",
-      "#06b6d4",
-      "#f97316",
-      "#84cc16",
-    ];
-
-    const datasets = chartData.data.datasets.map((ds, i) => {
-      const color = ds.color || COLORS[i % COLORS.length];
-      const isPie = ["pie", "doughnut"].includes(chartData.chartType);
-      return {
-        label: ds.label,
-        data: ds.data,
-        backgroundColor: isPie
-          ? chartData.data.labels.map(
-              (_, j) => COLORS[j % COLORS.length] + "cc"
-            )
-          : color + "33",
-        borderColor: isPie
-          ? chartData.data.labels.map((_, j) => COLORS[j % COLORS.length])
-          : color,
-        borderWidth: 2,
-        borderRadius: chartData.chartType === "bar" ? 6 : 0,
-        fill: chartData.chartType === "line",
-        tension: 0.4,
-        pointBackgroundColor: color,
-        pointRadius: chartData.chartType === "line" ? 4 : 0,
-        pointHoverRadius: 6,
-      };
-    });
-
-    const ctx = canvasRef.current.getContext("2d");
-
-    chartRef.current = new window.Chart(ctx, {
-      type: chartData.chartType,
-      data: {
-        labels: chartData.data.labels,
-        datasets,
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 600, easing: "easeInOutQuart" },
-        plugins: {
-          legend: {
-            display:
-              datasets.length > 1 ||
-              ["pie", "doughnut"].includes(chartData.chartType),
-            labels: {
-              color: "#ccc",
-              font: { family: "'Figtree', sans-serif", size: 11 },
-              padding: 14,
-              usePointStyle: true,
-            },
-          },
-          tooltip: {
-            backgroundColor: "#1e1e1e",
-            titleColor: "#fff",
-            bodyColor: "#ccc",
-            borderColor: "#3a3a3a",
-            borderWidth: 1,
-            padding: 10,
-            callbacks: {
-              label: (ctx) =>
-                ` ${ctx.dataset.label || ""}: ${ctx.parsed.y ?? ctx.parsed}`,
-            },
-          },
-        },
-        scales: ["pie", "doughnut"].includes(chartData.chartType)
-          ? {}
-          : {
-              x: {
-                ticks: {
-                  color: "#888",
-                  font: { family: "'Figtree', sans-serif", size: 10 },
-                  maxRotation: 45,
-                },
-                grid: { color: "#2a2a2a" },
-                title: chartData.xAxisLabel
-                  ? {
-                      display: true,
-                      text: chartData.xAxisLabel,
-                      color: "#666",
-                      font: { size: 11 },
-                    }
-                  : { display: false },
-              },
-              y: {
-                ticks: {
-                  color: "#888",
-                  font: { family: "'Figtree', sans-serif", size: 10 },
-                },
-                grid: { color: "#2a2a2a" },
-                title: chartData.yAxisLabel
-                  ? {
-                      display: true,
-                      text: chartData.yAxisLabel,
-                      color: "#666",
-                      font: { size: 11 },
-                    }
-                  : { display: false },
-              },
-            },
-      },
-    });
-
-    return () => {
-      if (chartRef.current) {
-        chartRef.current.destroy();
-        chartRef.current = null;
-      }
-    };
-  }, [chartData]);
-
-  if (!chartData || chartData.type === "text") return null;
-
-  return (
-    <div
-      style={{
-        background: "#2a2a2a",
-        borderRadius: 16,
-        padding: "16px",
-        marginBottom: 16,
-        border: "1px solid #3a3a3a",
-      }}
-    >
-      {/* Chart Title */}
-      <div
-        style={{
-          fontSize: "0.92rem",
-          fontWeight: 700,
-          color: "#fff",
-          marginBottom: 4,
-        }}
-      >
-        {chartData.title}
-      </div>
-
-      {/* Chart Canvas */}
-      <div style={{ height: 280, position: "relative", marginBottom: 12 }}>
-        <canvas ref={canvasRef} />
-      </div>
-
-      {/* Description */}
-      {chartData.description && (
-        <div
-          style={{
-            fontSize: "0.8rem",
-            color: "#999",
-            lineHeight: 1.6,
-            marginBottom: 8,
-            padding: "10px 12px",
-            background: "#10a37f10",
-            borderRadius: 8,
-            border: "1px solid #10a37f20",
-          }}
-        >
-          💡 {chartData.description}
-        </div>
-      )}
-
-      {/* Source */}
-      {chartData.source && (
-        <div style={{ fontSize: "0.7rem", color: "#555", textAlign: "right" }}>
-          Source: {chartData.source}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── CHART SCREEN ──────────────────────────────────────────────────────────────
-function ChartScreen({ exam, API_URL }) {
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [chartData, setChartData] = useState(null);
-  const [textAnswer, setTextAnswer] = useState("");
-  const [error, setError] = useState("");
-  const [history, setHistory] = useState([]);
-
-  const SUGGESTIONS = {
-    UPSC: [
-      "India GDP growth rate 2015 to 2023",
-      "Union Budget 2024 sector allocation",
-      "Literacy rate of top 5 Indian states",
-      "India's exports by category 2023",
-      "BRICS countries GDP comparison",
-    ],
-    JEE: [
-      "Velocity time graph for uniform acceleration",
-      "Boyle's law pressure volume relationship",
-      "Projectile motion trajectory",
-      "Radioactive decay curve",
-      "Carnot cycle efficiency vs temperature",
-    ],
-    NEET: [
-      "Human population growth curve",
-      "Enzyme activity vs pH graph",
-      "Logistic vs exponential growth",
-      "Absorption spectrum of chlorophyll",
-      "Blood pressure in different vessels",
-    ],
-    "Current Affairs": [
-      "India inflation rate 2022 to 2024",
-      "Top 5 countries by renewable energy",
-      "India FDI inflows 2020 to 2024",
-      "Global temperature rise 1990 to 2024",
-      "Digital India internet users growth",
-    ],
-    General: [
-      "India GDP growth last 10 years",
-      "Population of G7 countries",
-      "Global CO2 emissions by country",
-      "India's state wise population 2011",
-      "Top 5 economies by GDP 2024",
-    ],
-  };
-
-  const suggestions = SUGGESTIONS[exam] || SUGGESTIONS["General"];
-
-  const generate = async (q) => {
-    const question = q || query;
-    if (!question.trim()) return;
-    setLoading(true);
-    setError("");
-    setChartData(null);
-    setTextAnswer("");
-
-    try {
-      const res = await fetch(`${API_URL}/chart/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, exam }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      if (data.type === "text") {
-        setTextAnswer(data.answer);
-      } else {
-        setChartData(data);
-        setHistory((prev) => [
-          { query: question, chartData: data },
-          ...prev.slice(0, 4),
-        ]);
-      }
-    } catch (err) {
-      setError("Failed to generate chart. Try a different question.");
-    }
-    setLoading(false);
-  };
-
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        background: "#212121",
-        color: "#ececec",
-        fontFamily: "'Figtree', sans-serif",
-        overflow: "hidden",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "12px 16px",
-          borderBottom: "1px solid #2a2a2a",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ fontWeight: 700, fontSize: "1rem", color: "#fff" }}>
-          📊 Charts & Graphs
-        </div>
-        <div style={{ fontSize: "0.72rem", color: "#666" }}>{exam}</div>
-      </div>
-
-      {/* Scrollable Content */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
-        {/* Search Box */}
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: 16,
-          }}
-        >
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && generate()}
-            placeholder="e.g. India GDP growth 2015 to 2023..."
-            style={{
-              flex: 1,
-              padding: "11px 14px",
-              background: "#2a2a2a",
-              border: "1px solid #3a3a3a",
-              borderRadius: 10,
-              color: "#ececec",
-              fontSize: "0.9rem",
-              outline: "none",
-              fontFamily: "'Figtree', sans-serif",
-            }}
-          />
-          <button
-            onClick={() => generate()}
-            disabled={loading || !query.trim()}
-            style={{
-              padding: "11px 16px",
-              background: loading || !query.trim() ? "#2a2a2a" : "#10a37f",
-              border: "none",
-              borderRadius: 10,
-              color: loading || !query.trim() ? "#555" : "#fff",
-              fontWeight: 600,
-              cursor: loading || !query.trim() ? "not-allowed" : "pointer",
-              fontSize: "0.9rem",
-              flexShrink: 0,
-            }}
-          >
-            {loading ? "..." : "Go"}
-          </button>
-        </div>
-
-        {/* Suggestions */}
-        {!chartData && !textAnswer && !loading && (
-          <>
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "#555",
-                marginBottom: 10,
-                fontWeight: 600,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-              }}
-            >
-              Try these for {exam}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                marginBottom: 20,
-              }}
-            >
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setQuery(s);
-                    generate(s);
-                  }}
-                  style={{
-                    padding: "11px 14px",
-                    background: "#2a2a2a",
-                    border: "1px solid #333",
-                    borderRadius: 10,
-                    color: "#ddd",
-                    fontSize: "0.85rem",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontFamily: "'Figtree', sans-serif",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ color: "#10a37f" }}>📈</span> {s}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Loading */}
-        {loading && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: 200,
-              gap: 14,
-            }}
-          >
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                border: "3px solid #2a2a2a",
-                borderTopColor: "#10a37f",
-                borderRadius: "50%",
-                animation: "spin 0.8s linear infinite",
-              }}
-            />
-            <div style={{ color: "#666", fontSize: "0.85rem" }}>
-              Generating chart...
-            </div>
-          </div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div
-            style={{
-              background: "#e53e3e15",
-              border: "1px solid #e53e3e40",
-              borderRadius: 10,
-              padding: "12px 14px",
-              color: "#e53e3e",
-              fontSize: "0.85rem",
-              marginBottom: 16,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        {/* Chart Result */}
-        {chartData && !loading && (
-          <>
-            <ChartRenderer chartData={chartData} />
-            <button
-              onClick={() => {
-                setChartData(null);
-                setQuery("");
-              }}
-              style={{
-                width: "100%",
-                padding: 12,
-                background: "#2a2a2a",
-                border: "1px solid #3a3a3a",
-                borderRadius: 10,
-                color: "#ddd",
-                fontSize: "0.88rem",
-                cursor: "pointer",
-                marginBottom: 20,
-              }}
-            >
-              New Chart
-            </button>
-          </>
-        )}
-
-        {/* Text Answer (when chart not applicable) */}
-        {textAnswer && !loading && (
-          <div
-            style={{
-              background: "#2a2a2a",
-              borderRadius: 12,
-              padding: "14px 16px",
-              marginBottom: 16,
-            }}
-          >
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "#10a37f",
-                fontWeight: 700,
-                marginBottom: 8,
-                textTransform: "uppercase",
-                letterSpacing: 0.8,
-              }}
-            >
-              💬 Text Answer
-            </div>
-            <div
-              style={{ fontSize: "0.88rem", color: "#ddd", lineHeight: 1.7 }}
-            >
-              {textAnswer}
-            </div>
-            <button
-              onClick={() => {
-                setTextAnswer("");
-                setQuery("");
-              }}
-              style={{
-                marginTop: 12,
-                padding: "8px 14px",
-                background: "transparent",
-                border: "1px solid #3a3a3a",
-                borderRadius: 8,
-                color: "#888",
-                fontSize: "0.82rem",
-                cursor: "pointer",
-              }}
-            >
-              Try another
-            </button>
-          </div>
-        )}
-
-        {/* Recent Charts History */}
-        {history.length > 0 && !chartData && !textAnswer && !loading && (
-          <>
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "#555",
-                marginBottom: 10,
-                fontWeight: 600,
-                letterSpacing: 0.5,
-                textTransform: "uppercase",
-              }}
-            >
-              Recent
-            </div>
-            {history.map((h, i) => (
-              <button
-                key={i}
-                onClick={() => {
-                  setChartData(h.chartData);
-                  setQuery(h.query);
-                }}
-                style={{
-                  width: "100%",
-                  padding: "10px 14px",
-                  background: "#2a2a2a",
-                  border: "1px solid #333",
-                  borderRadius: 10,
-                  color: "#ddd",
-                  fontSize: "0.85rem",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontFamily: "'Figtree', sans-serif",
-                  marginBottom: 8,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <span>📊</span>
-                <span
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {h.query}
-                </span>
-              </button>
-            ))}
-          </>
-        )}
-      </div>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // ── aiService.js ──────────────────────────────────────────────────────────────
-// PRIMARY:  Gemini 2.5 Flash (rotating 3 keys = 1,500 req/day)
+// PRIMARY:  gemini-2.5-flash-lite Lite (rotating 3 keys)
 // FALLBACK: Groq Llama (completely free)
 
 import Groq from "groq-sdk";
@@ -155,7 +155,7 @@ const callGemini = async (contents, exam, isVision = false) => {
 
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -211,7 +211,9 @@ const callGemini = async (contents, exam, isVision = false) => {
       if (!text) throw new Error("Gemini returned empty response");
 
       console.log(
-        `✅ Gemini answered using key ${attempt + 1} of ${GEMINI_KEYS.length}`
+        `✅ gemini-2.5-flash-lite  answered using key ${attempt + 1} of ${
+          GEMINI_KEYS.length
+        }`
       );
       return text;
     } catch (err) {
@@ -366,7 +368,7 @@ If it contains notes or diagrams, explain the key concepts clearly.`,
   // 1️⃣ Try Gemini Vision first (with key rotation)
   try {
     const answer = await callGemini(contents, exam, true);
-    console.log("✅ Image/PDF analyzed by Gemini 2.5 Flash Vision");
+    console.log("✅ Image/PDF analyzed by gemini-2.5-flash-lite Lite Vision");
     return answer;
   } catch (err) {
     console.warn(
@@ -439,7 +441,7 @@ const AGENT_TOOLS = [
   {
     name: "direct_answer",
     description:
-      "Answer directly from knowledge — for conceptual, syllabus-based, historical, or definition questions that don't need live data.",
+      "Use the AI's internal knowledge (Gemini). Choose this for concepts, syllabus topics, history, definitions, math, coding, or general chat that doesn't need live external data.",
     parameters: {
       type: "object",
       properties: {
@@ -456,59 +458,68 @@ export const askAIAgent = async (question, exam = "General") => {
     return { action: "direct" };
   }
 
-  const key = getNextGeminiKey();
+  // Try up to GEMINI_KEYS.length times (Key Rotation for Agent)
+  for (let attempt = 0; attempt < GEMINI_KEYS.length; attempt++) {
+    const key = getNextGeminiKey();
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: {
-            parts: [
-              {
-                text: `You are a routing agent for an exam preparation app (${exam}).
-Your ONLY job is to decide which tool to use for the user's question.
-- Use 'web_search' for anything time-sensitive, current, or recent
-- Use 'world_bank' for economic statistics and development indicators
-- Use 'direct_answer' for concepts, theory, history, definitions, exam syllabus
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system_instruction: {
+              parts: [
+                {
+                  text: `You are a routing agent for an exam preparation app (${exam}).
+Your ONLY job is to decide the best source to answer the user's question.
+1. 'web_search' (Serper API): For current affairs, news, recent events, government notifications, or dynamic facts.
+2. 'world_bank' (World Bank API): ONLY for economic stats like GDP, Inflation, Population, etc.
+3. 'direct_answer' (Gemini API): For static knowledge, concepts, history, science, syllabus, and general chat.
 Do NOT answer the question yourself. Just pick the right tool.`,
-              },
-            ],
-          },
-          contents: [{ role: "user", parts: [{ text: question }] }],
-          tools: [{ function_declarations: AGENT_TOOLS }],
-          tool_config: { function_calling_config: { mode: "ANY" } },
-          generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
-        }),
+                },
+              ],
+            },
+            contents: [{ role: "user", parts: [{ text: question }] }],
+            tools: [{ function_declarations: AGENT_TOOLS }],
+            tool_config: { function_calling_config: { mode: "ANY" } },
+            generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
+          }),
+        }
+      );
+
+      if (response.status === 429) {
+        console.warn(
+          `⚠️ Agent Key ${attempt + 1} quota exceeded → trying next...`
+        );
+        continue;
       }
-    );
 
-    if (!response.ok) return { action: "direct" };
+      if (!response.ok) return { action: "direct" };
 
-    const data = await response.json();
-    const part = data.candidates?.[0]?.content?.parts?.[0];
+      const data = await response.json();
+      const part = data.candidates?.[0]?.content?.parts?.[0];
 
-    if (!part?.functionCall) return { action: "direct" };
+      if (!part?.functionCall) return { action: "direct" };
 
-    const { name, args } = part.functionCall;
+      const { name, args } = part.functionCall;
 
-    if (name === "web_search")
-      return { action: "web_search", query: args.query };
-    if (name === "world_bank")
-      return {
-        action: "world_bank",
-        country_code: args.country_code,
-        indicator: args.indicator,
-      };
-    return { action: "direct" };
-  } catch (err) {
-    console.warn(
-      "⚠️ Agent routing failed:",
-      err.message,
-      "→ defaulting to direct answer"
-    );
-    return { action: "direct" };
+      if (name === "web_search")
+        return { action: "web_search", query: args.query };
+      if (name === "world_bank")
+        return {
+          action: "world_bank",
+          country_code: args.country_code,
+          indicator: args.indicator,
+        };
+      if (name === "direct_answer") return { action: "direct" };
+      return { action: "direct" };
+    } catch (err) {
+      console.warn("⚠️ Agent routing failed:", err.message);
+      continue; // Try next key on error
+    }
   }
+
+  return { action: "direct" };
 };
