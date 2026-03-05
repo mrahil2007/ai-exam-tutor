@@ -116,19 +116,16 @@ const EXAM_META = {
 };
 
 // ── POLLINATIONS IMAGE HELPERS ───────────────────────────────────────────────
-const escapeMarkdownAlt = (text = "") =>
-  text.replace(/\n+/g, " ").replace(/\[/g, "\\[").replace(/\]/g, "\\]").trim();
-
 const buildPollinationsCandidates = (prompt) => {
   const seed = Math.floor(Math.random() * 999999);
   const encodedPrompt = encodeURIComponent(prompt);
   const query = `width=768&height=768&nologo=true&seed=${seed}`;
   return [
-    `https://gen.pollinations.ai/image/${encodedPrompt}?model=flux`,
-    `https://gen.pollinations.ai/image/${encodedPrompt}?model=turbo`,
-    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}`,
     `https://gen.pollinations.ai/image/${encodedPrompt}?${query}&model=flux`,
     `https://gen.pollinations.ai/image/${encodedPrompt}?${query}&model=turbo`,
+    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}`,
+    `https://gen.pollinations.ai/image/${encodedPrompt}?model=flux`,
+    `https://gen.pollinations.ai/image/${encodedPrompt}?model=turbo`,
     `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}`,
     `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}&model=flux`,
     `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}&model=turbo`,
@@ -157,47 +154,73 @@ const canLoadImage = (url, timeoutMs = 4500) =>
 
 const resolvePollinationsUrl = async (prompt, apiUrl) => {
   const candidates = [];
+  const addCandidate = (url) => {
+    if (typeof url !== "string") return;
+    const value = url.trim();
+    if (!value || candidates.includes(value)) return;
+    candidates.push(value);
+  };
 
   if (apiUrl) {
-    let timeoutId;
-    try {
-      const controller = new AbortController();
-      timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`${apiUrl}/image/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      const data = await res.json().catch(() => null);
-      if (res.status === 401 || res.status === 403) return null;
-      if (data) {
-        if (typeof data?.imageUrl === "string" && data.imageUrl.trim())
-          candidates.push(data.imageUrl.trim());
-        if (typeof data?.proxyUrl === "string" && data.proxyUrl.trim())
-          candidates.push(data.proxyUrl.trim());
-        if (Array.isArray(data?.directUrls)) {
-          for (const url of data.directUrls) {
-            if (typeof url === "string" && url.trim()) candidates.push(url.trim());
+    const fetchFromBackend = async () => {
+      let timeoutId;
+      try {
+        const controller = new AbortController();
+        timeoutId = setTimeout(() => controller.abort(), 9000);
+        const res = await fetch(`${apiUrl}/image/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json().catch(() => null);
+        if (data) {
+          addCandidate(data?.imageUrl);
+          addCandidate(data?.proxyUrl);
+          if (Array.isArray(data?.directUrls)) {
+            for (const url of data.directUrls) addCandidate(url);
           }
         }
+        if (res.status === 401 || res.status === 403) return "auth_error";
+        if (!res.ok) return "backend_error";
+        return "ok";
+      } catch (e) {
+        return "network_error";
+      } finally {
+        clearTimeout(timeoutId);
       }
-    } catch (e) {
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    };
+
+    const firstTry = await fetchFromBackend();
+    if (firstTry === "auth_error") return null;
+    if (firstTry === "network_error") await fetchFromBackend();
   }
 
   for (const url of buildPollinationsCandidates(prompt)) {
-    if (!candidates.includes(url)) candidates.push(url);
+    addCandidate(url);
   }
 
-  for (const url of candidates) {
-    if (await canLoadImage(url)) return url;
+  const dataUrlCandidate = candidates.find((url) =>
+    /^data:image\/[a-z0-9.+-]+;base64,/i.test(url)
+  );
+  if (dataUrlCandidate) return dataUrlCandidate;
+
+  for (const url of candidates.slice(0, 3)) {
+    if (await canLoadImage(url, 3000)) return url;
   }
 
-  return null;
+  return candidates[0] || null;
+};
+
+const isImageGenerationVerb = (token = "") => {
+  const t = token.toLowerCase().replace(/[^a-z]/g, "");
+  if (!t) return false;
+  if (["generate", "create", "draw", "make", "imagine"].includes(t))
+    return true;
+  // Accept common typos like "genrate", "generrate", "genmerate"
+  if (/^gen[a-z]{0,8}rate$/.test(t)) return true;
+  return false;
 };
 
 const extractImagePrompt = (text = "") => {
@@ -217,7 +240,30 @@ const extractImagePrompt = (text = "") => {
   );
   if (politeMatch?.[1]?.trim()) return politeMatch[1].trim();
 
+  // Fallback parser: tolerate typoed generation verb but require explicit "image".
+  const imageWithPromptMatch = value.match(
+    /\bimage\b\s*(?:of|for)?\s*[:,-]?\s*(.+)$/i
+  );
+  if (imageWithPromptMatch?.[1]?.trim()) {
+    const beforeImage = value
+      .slice(0, imageWithPromptMatch.index || 0)
+      .trim();
+    const tokens = beforeImage.split(/\s+/).filter(Boolean);
+    if (tokens.some(isImageGenerationVerb)) {
+      return imageWithPromptMatch[1].trim();
+    }
+  }
+
   return null;
+};
+
+const markdownUrlTransform = (url) => {
+  if (typeof url !== "string") return "";
+  const value = url.trim();
+  if (!value) return "";
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) return value;
+  if (/^(https?:|mailto:|tel:)/i.test(value)) return value;
+  return "";
 };
 
 // ── SPLASH SCREEN ─────────────────────────────────────────────────────────────
@@ -2495,7 +2541,7 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
     const candidates = [];
     if (typeof src === "string" && src.trim()) candidates.push(src.trim());
     if (typeof alt === "string" && alt.trim()) {
-      for (const url of buildPollinationsCandidates(alt.trim())) {
+      for (const url of buildPollinationsCandidates(alt.trim()).slice(0, 3)) {
         if (!candidates.includes(url)) candidates.push(url);
       }
     }
@@ -2509,6 +2555,22 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
     setLoading(true);
     setError(false);
   }, [src, alt]);
+
+  useEffect(() => {
+    if (!loading || error) return;
+    const timer = setTimeout(() => {
+      const nextIndex = sourceIndex + 1;
+      if (nextIndex < fallbackSources.length) {
+        setSourceIndex(nextIndex);
+        setLoading(true);
+        setError(false);
+      } else {
+        setLoading(false);
+        setError(true);
+      }
+    }, 12000);
+    return () => clearTimeout(timer);
+  }, [loading, error, sourceIndex, fallbackSources.length]);
 
   const handleDownload = async () => {
     try {
@@ -2547,11 +2609,11 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
   };
 
   return (
-    <div style={{ margin: "12px 0", maxWidth: "100%" }}>
+    <div style={{ margin: "12px 0", width: "100%", maxWidth: 360 }}>
       <div
         style={{
           position: "relative",
-          minHeight: 240,
+          minHeight: error ? 84 : 180,
           background: "#1a1a1a",
           borderRadius: 12,
           overflow: "hidden",
@@ -2559,6 +2621,7 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          width: "100%",
         }}
       >
         {loading && !error && (
@@ -2602,6 +2665,7 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
           }}
           style={{
             maxWidth: "100%",
+            maxHeight: 320,
             display: loading ? "none" : "block",
             borderRadius: 12,
             objectFit: "contain",
@@ -2609,7 +2673,7 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
           }}
         />
         {error && (
-          <div style={{ color: "#e53e3e", fontSize: "0.85rem" }}>
+          <div style={{ color: "#e53e3e", fontSize: "0.85rem", padding: "0 12px" }}>
             ⚠️ Failed to load image
           </div>
         )}
@@ -2862,13 +2926,19 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     if (imagePrompt) {
       const prompt = imagePrompt;
       const imageUrl = await resolvePollinationsUrl(prompt, API_URL);
-      const safePrompt = escapeMarkdownAlt(prompt);
-      const content = imageUrl
-        ? `![${safePrompt}](${imageUrl})`
-        : "⚠️ Could not generate image right now. Please try again.";
       setMessages((p) => {
         const updated = [...p];
-        updated[updated.length - 1].content = content;
+        updated[updated.length - 1] = imageUrl
+          ? {
+              ...updated[updated.length - 1],
+              content: `🖼️ ${prompt}`,
+              imageUrl,
+              imagePrompt: prompt,
+            }
+          : {
+              ...updated[updated.length - 1],
+              content: "⚠️ Could not generate image right now. Please try again.",
+            };
         return updated;
       });
       setLoading(false);
@@ -3102,7 +3172,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
         />
       ),
     }),
-    []
+    [sendMessageWithText]
   );
 
   const formatDate = (dateStr) => {
@@ -3763,6 +3833,35 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                               />
                             ))}
                           </div>
+                        ) : msg.imageUrl ? (
+                          <div
+                            className="msg-content"
+                            style={{
+                              fontSize: "0.9rem",
+                              lineHeight: 1.75,
+                              color: "#ddd",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            <ImageComponent
+                              src={msg.imageUrl}
+                              alt={
+                                msg.imagePrompt ||
+                                (typeof msg.content === "string"
+                                  ? msg.content.replace(/^🖼️\s*/, "").trim()
+                                  : "") ||
+                                "generated image"
+                              }
+                              onRegenerate={(prompt) =>
+                                sendMessageWithText(
+                                  `Generate image of ${
+                                    prompt || msg.imagePrompt || "a new scene"
+                                  }`
+                                )
+                              }
+                              onZoom={setSelectedImage}
+                            />
+                          </div>
                         ) : (
                           <div
                             className="msg-content"
@@ -3773,7 +3872,10 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                               wordBreak: "break-word",
                             }}
                           >
-                            <ReactMarkdown components={markdownComponents}>
+                            <ReactMarkdown
+                              components={markdownComponents}
+                              urlTransform={markdownUrlTransform}
+                            >
                               {msg.content}
                             </ReactMarkdown>
                             {loading &&
