@@ -116,101 +116,52 @@ const EXAM_META = {
 };
 
 // ── POLLINATIONS IMAGE HELPERS ───────────────────────────────────────────────
-const buildPollinationsCandidates = (prompt) => {
-  const seed = Math.floor(Math.random() * 999999);
-  const encodedPrompt = encodeURIComponent(prompt);
-  const query = `width=768&height=768&nologo=true&seed=${seed}`;
-  return [
-    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}&model=flux`,
-    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}&model=turbo`,
-    `https://gen.pollinations.ai/image/${encodedPrompt}?${query}`,
-    `https://gen.pollinations.ai/image/${encodedPrompt}?model=flux`,
-    `https://gen.pollinations.ai/image/${encodedPrompt}?model=turbo`,
-    `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}`,
-    `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}&model=flux`,
-    `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}&model=turbo`,
-  ];
-};
-
-const canLoadImage = (url, timeoutMs = 4500) =>
-  new Promise((resolve) => {
-    if (!url) return resolve(false);
-    const img = new Image();
-    const timer = setTimeout(() => {
-      img.onload = null;
-      img.onerror = null;
-      resolve(false);
-    }, timeoutMs);
-    img.onload = () => {
-      clearTimeout(timer);
-      resolve(true);
-    };
-    img.onerror = () => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    img.src = url;
-  });
-
 const resolvePollinationsUrl = async (prompt, apiUrl) => {
-  const candidates = [];
-  const addCandidate = (url) => {
-    if (typeof url !== "string") return;
-    const value = url.trim();
-    if (!value || candidates.includes(value)) return;
-    candidates.push(value);
+  const emptyResult = {
+    url: null,
+    modelUsed: null,
+    routeType: null,
+    promptUsed: null,
+    attemptCount: 0,
   };
+  if (!apiUrl) return emptyResult;
 
-  if (apiUrl) {
-    const fetchFromBackend = async () => {
-      let timeoutId;
-      try {
-        const controller = new AbortController();
-        timeoutId = setTimeout(() => controller.abort(), 9000);
-        const res = await fetch(`${apiUrl}/image/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        const data = await res.json().catch(() => null);
-        if (data) {
-          addCandidate(data?.imageUrl);
-          addCandidate(data?.proxyUrl);
-          if (Array.isArray(data?.directUrls)) {
-            for (const url of data.directUrls) addCandidate(url);
-          }
-        }
-        if (res.status === 401 || res.status === 403) return "auth_error";
-        if (!res.ok) return "backend_error";
-        return "ok";
-      } catch (e) {
-        return "network_error";
-      } finally {
-        clearTimeout(timeoutId);
-      }
+  let timeoutId;
+  try {
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), 60000);
+    const res = await fetch(`${apiUrl}/image/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) return emptyResult;
+
+    const imageUrl =
+      typeof data?.imageUrl === "string" && data.imageUrl.trim()
+        ? data.imageUrl.trim()
+        : null;
+    if (!imageUrl) return emptyResult;
+
+    return {
+      ...emptyResult,
+      url: imageUrl,
+      modelUsed: data?.modelUsed || null,
+      routeType: data?.routeType || null,
+      promptUsed: data?.promptUsed || null,
+      attemptCount:
+        Number.isFinite(data?.attemptCount) && data.attemptCount > 0
+          ? data.attemptCount
+          : 1,
     };
-
-    const firstTry = await fetchFromBackend();
-    if (firstTry === "auth_error") return null;
-    if (firstTry === "network_error") await fetchFromBackend();
+  } catch (e) {
+    return emptyResult;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  for (const url of buildPollinationsCandidates(prompt)) {
-    addCandidate(url);
-  }
-
-  const dataUrlCandidate = candidates.find((url) =>
-    /^data:image\/[a-z0-9.+-]+;base64,/i.test(url)
-  );
-  if (dataUrlCandidate) return dataUrlCandidate;
-
-  for (const url of candidates.slice(0, 3)) {
-    if (await canLoadImage(url, 3000)) return url;
-  }
-
-  return candidates[0] || null;
 };
 
 const isImageGenerationVerb = (token = "") => {
@@ -245,9 +196,7 @@ const extractImagePrompt = (text = "") => {
     /\bimage\b\s*(?:of|for)?\s*[:,-]?\s*(.+)$/i
   );
   if (imageWithPromptMatch?.[1]?.trim()) {
-    const beforeImage = value
-      .slice(0, imageWithPromptMatch.index || 0)
-      .trim();
+    const beforeImage = value.slice(0, imageWithPromptMatch.index || 0).trim();
     const tokens = beforeImage.split(/\s+/).filter(Boolean);
     if (tokens.some(isImageGenerationVerb)) {
       return imageWithPromptMatch[1].trim();
@@ -255,6 +204,17 @@ const extractImagePrompt = (text = "") => {
   }
 
   return null;
+};
+
+const isImageEditIntent = (text = "") => {
+  const value = text.trim().toLowerCase();
+  if (!value) return false;
+  if (/\?$/.test(value)) return false;
+  if (/^(what|which|who|where|when|why|how)\b/.test(value)) return false;
+
+  return /\b(edit|change|modify|make|turn|replace|remove|add|swap|recolor|re-colou?r|color|colour|background|bg|retouch|enhance|transform|convert)\b/.test(
+    value
+  );
 };
 
 const markdownUrlTransform = (url) => {
@@ -2535,42 +2495,36 @@ function PlannerScreen({ exam, API_URL }) {
 function ImageComponent({ src, alt, onRegenerate, onZoom }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [sourceIndex, setSourceIndex] = useState(0);
-
-  const fallbackSources = useMemo(() => {
-    const candidates = [];
-    if (typeof src === "string" && src.trim()) candidates.push(src.trim());
-    if (typeof alt === "string" && alt.trim()) {
-      for (const url of buildPollinationsCandidates(alt.trim()).slice(0, 3)) {
-        if (!candidates.includes(url)) candidates.push(url);
-      }
-    }
-    return candidates;
-  }, [src, alt]);
-
-  const activeSrc = fallbackSources[sourceIndex] || src;
+  const imgRef = useRef(null);
+  const activeSrc = typeof src === "string" ? src.trim() : "";
 
   useEffect(() => {
-    setSourceIndex(0);
     setLoading(true);
     setError(false);
-  }, [src, alt]);
+  }, [src]);
 
   useEffect(() => {
+    const imageElement = imgRef.current;
+    if (!imageElement) return;
+    // Handle cached/data URLs where onLoad might not fire in time.
+    if (imageElement.complete && imageElement.naturalWidth > 0) {
+      setLoading(false);
+      setError(false);
+      return;
+    }
     if (!loading || error) return;
     const timer = setTimeout(() => {
-      const nextIndex = sourceIndex + 1;
-      if (nextIndex < fallbackSources.length) {
-        setSourceIndex(nextIndex);
-        setLoading(true);
-        setError(false);
-      } else {
+      const current = imgRef.current;
+      if (current && current.complete && current.naturalWidth > 0) {
         setLoading(false);
-        setError(true);
+        setError(false);
+        return;
       }
-    }, 12000);
+      setLoading(false);
+      setError(true);
+    }, 45000);
     return () => clearTimeout(timer);
-  }, [loading, error, sourceIndex, fallbackSources.length]);
+  }, [loading, error, activeSrc]);
 
   const handleDownload = async () => {
     try {
@@ -2592,7 +2546,11 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
   const handleShare = async () => {
     if (navigator.share) {
       try {
-        await navigator.share({ title: "ExamAI Image", text: alt, url: activeSrc });
+        await navigator.share({
+          title: "ExamAI Image",
+          text: alt,
+          url: activeSrc,
+        });
       } catch (err) {}
     } else {
       try {
@@ -2648,18 +2606,12 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
           </div>
         )}
         <img
+          ref={imgRef}
           src={activeSrc}
           alt={alt}
           onLoad={() => setLoading(false)}
           onClick={() => onZoom?.(activeSrc)}
           onError={() => {
-            const nextIndex = sourceIndex + 1;
-            if (nextIndex < fallbackSources.length) {
-              setSourceIndex(nextIndex);
-              setLoading(true);
-              setError(false);
-              return;
-            }
             setLoading(false);
             setError(true);
           }}
@@ -2673,34 +2625,36 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
           }}
         />
         {error && (
-          <div style={{ color: "#e53e3e", fontSize: "0.85rem", padding: "0 12px" }}>
+          <div
+            style={{ color: "#e53e3e", fontSize: "0.85rem", padding: "0 12px" }}
+          >
             ⚠️ Failed to load image
           </div>
         )}
       </div>
-      {!loading && !error && (
+      {!loading && (
         <div
           style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}
         >
           <button
             onClick={handleDownload}
+            title="Download"
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              justifyContent: "center",
               background: "#2a2a2a",
               border: "1px solid #3a3a3a",
               borderRadius: 8,
-              padding: "8px 12px",
+              width: 38,
+              height: 38,
               color: "#ececec",
-              fontSize: "0.78rem",
               cursor: "pointer",
-              fontWeight: 500,
             }}
           >
             <svg
-              width="14"
-              height="14"
+              width="18"
+              height="18"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -2712,27 +2666,26 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
               <polyline points="7 10 12 15 17 10" />
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-            Download
           </button>
           <button
             onClick={handleShare}
+            title="Share"
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              justifyContent: "center",
               background: "#2a2a2a",
               border: "1px solid #3a3a3a",
               borderRadius: 8,
-              padding: "8px 12px",
+              width: 38,
+              height: 38,
               color: "#ececec",
-              fontSize: "0.78rem",
               cursor: "pointer",
-              fontWeight: 500,
             }}
           >
             <svg
-              width="14"
-              height="14"
+              width="18"
+              height="18"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -2746,27 +2699,26 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
               <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
             </svg>
-            Share
           </button>
           <button
             onClick={handleRegenerate}
+            title="Regenerate"
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              justifyContent: "center",
               background: "#2a2a2a",
               border: "1px solid #3a3a3a",
               borderRadius: 8,
-              padding: "8px 12px",
+              width: 38,
+              height: 38,
               color: "#ececec",
-              fontSize: "0.78rem",
               cursor: "pointer",
-              fontWeight: 500,
             }}
           >
             <svg
-              width="14"
-              height="14"
+              width="18"
+              height="18"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -2776,7 +2728,6 @@ function ImageComponent({ src, alt, onRegenerate, onZoom }) {
             >
               <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
             </svg>
-            Regenerate
           </button>
         </div>
       )}
@@ -2902,6 +2853,18 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       .slice(-10)
       .map((m) => ({ role: m.role, content: m.content }));
 
+  const handleImageEdit = async (src) => {
+    try {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      const file = new File([blob], "image_edit.png", { type: blob.type });
+      setPendingFile(file);
+      if (textareaRef.current) textareaRef.current.focus();
+    } catch (e) {
+      showToast("⚠️ Failed to load image for editing");
+    }
+  };
+
   const sendMessageWithText = async (text, withVoice = false) => {
     if (!text.trim() || loading) return;
     setInput("");
@@ -2925,7 +2888,8 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     const imagePrompt = extractImagePrompt(text);
     if (imagePrompt) {
       const prompt = imagePrompt;
-      const imageUrl = await resolvePollinationsUrl(prompt, API_URL);
+      const imageResult = await resolvePollinationsUrl(prompt, API_URL);
+      const imageUrl = imageResult?.url || null;
       setMessages((p) => {
         const updated = [...p];
         updated[updated.length - 1] = imageUrl
@@ -2934,10 +2898,15 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
               content: `🖼️ ${prompt}`,
               imageUrl,
               imagePrompt: prompt,
+              imageModelUsed: imageResult?.modelUsed || null,
+              imageRouteType: imageResult?.routeType || null,
+              imagePromptUsed: imageResult?.promptUsed || null,
+              imageAttemptCount: imageResult?.attemptCount || null,
             }
           : {
               ...updated[updated.length - 1],
-              content: "⚠️ Could not generate image right now. Please try again.",
+              content:
+                "⚠️ Could not generate image right now. Please try again.",
             };
         return updated;
       });
@@ -3019,6 +2988,48 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
       { role: "assistant", content: "" },
     ]);
     try {
+      if (!isPdf && prompt && isImageEditIntent(prompt)) {
+        const editFormData = new FormData();
+        editFormData.append("image", file);
+        editFormData.append("prompt", prompt);
+        editFormData.append("width", "1024");
+        editFormData.append("height", "1024");
+
+        const editRes = await fetch(`${API_URL}/image/edit`, {
+          method: "POST",
+          body: editFormData,
+        });
+        const editData = await editRes.json().catch(() => null);
+
+        setMessages((p) => {
+          const updated = [...p];
+          updated[updated.length - 1] =
+            editRes.ok &&
+            typeof editData?.imageUrl === "string" &&
+            editData.imageUrl
+              ? {
+                  ...updated[updated.length - 1],
+                  content: `🖌️ ${prompt}`,
+                  imageUrl: editData.imageUrl,
+                  imagePrompt: prompt,
+                  imageModelUsed: editData?.modelUsed || null,
+                  imageRouteType: editData?.routeType || null,
+                  imagePromptUsed: editData?.promptUsed || null,
+                  imageAttemptCount: editData?.attemptCount || null,
+                }
+              : {
+                  ...updated[updated.length - 1],
+                  content:
+                    editData?.error ||
+                    "⚠️ Could not edit image right now. Please try again.",
+                };
+          return updated;
+        });
+        setLoading(false);
+        loadChatList();
+        return;
+      }
+
       const formData = new FormData();
       formData.append("image", file);
       formData.append("exam", exam);
@@ -3747,16 +3758,11 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                         }}
                       >
                         {msg.imageUrl && (
-                          <img
+                          <ImageComponent
                             src={msg.imageUrl}
                             alt="uploaded"
-                            style={{
-                              maxWidth: "100%",
-                              maxHeight: 260,
-                              borderRadius: 10,
-                              display: "block",
-                              objectFit: "contain",
-                            }}
+                            onZoom={setSelectedImage}
+                            onEdit={handleImageEdit}
                           />
                         )}
                         {msg.filePrompt && (
@@ -3860,6 +3866,7 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
                                 )
                               }
                               onZoom={setSelectedImage}
+                              onEdit={handleImageEdit}
                             />
                           </div>
                         ) : (

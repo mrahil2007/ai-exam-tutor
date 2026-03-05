@@ -10,7 +10,12 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import { extractText } from "unpdf";
-import { askAI, askAIWithImage, askAIAgent } from "./aiService.js";
+import {
+  askAI,
+  askAIWithImage,
+  askAIAgent,
+  buildImageEditPrompt,
+} from "./aiService.js";
 import Groq from "groq-sdk";
 import { MongoClient, ObjectId } from "mongodb";
 import rateLimit from "express-rate-limit";
@@ -934,6 +939,195 @@ const clampImageSize = (value, fallback) => {
   return Math.min(1536, Math.max(256, parsed));
 };
 
+const buildDirectPollinationsUrl = ({
+  prompt,
+  width = 1024,
+  height = 1024,
+  seed,
+  model = "flux",
+}) => {
+  const safeWidth = clampImageSize(width, 1024);
+  const safeHeight = clampImageSize(height, 1024);
+  const parsedSeed = Number.parseInt(seed, 10);
+  const safeSeed = Number.isFinite(parsedSeed)
+    ? Math.abs(parsedSeed)
+    : Math.floor(Math.random() * 99999999);
+  const cleanPrompt = String(prompt || "").trim();
+  const cleanModel =
+    typeof model === "string" && model.trim() ? model.trim() : "flux";
+  const encodedPrompt = encodeURIComponent(cleanPrompt);
+  const query = new URLSearchParams({
+    width: String(safeWidth),
+    height: String(safeHeight),
+    nologo: "true",
+    seed: String(safeSeed),
+    model: cleanModel,
+  });
+  return {
+    imageUrl: `https://gen.pollinations.ai/image/${encodedPrompt}?${query.toString()}`,
+    safeSeed,
+    safeWidth,
+    safeHeight,
+    modelUsed: cleanModel,
+    promptUsed: cleanPrompt,
+  };
+};
+
+const normalizeImagePrompt = (value = "") => {
+  const raw = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!raw) return "";
+
+  let prompt = raw
+    .replace(/^(?:an?\s+)?(?:image|photo|picture|portrait)\s+of\s+/i, "")
+    .replace(/^(?:an?\s+)?(?:actor|actress|celebrity|celeb)\s+/i, "")
+    .trim();
+
+  // Common name normalization improves identity hit-rate.
+  prompt = prompt
+    .replace(/\bshahrukh\b/gi, "Shah Rukh")
+    .replace(/\bsharukh\b/gi, "Shah Rukh")
+    .replace(/\bsrk\b/gi, "Shah Rukh Khan");
+
+  return prompt || raw;
+};
+
+const classifyPromptType = (prompt = "") => {
+  const value = String(prompt || "").toLowerCase();
+  if (!value) return "generic";
+
+  if (
+    /\b(anime|manga|illustration|cartoon|comic|cel[-\s]?shade|waifu)\b/.test(
+      value
+    )
+  ) {
+    return "anime_illustration";
+  }
+  if (
+    /\b(logo|icon|app icon|brand mark|emblem|flat design|minimal)\b/.test(value)
+  ) {
+    return "logo_icon";
+  }
+  if (
+    /\b(poster|flyer|banner|typography|text design|cover art|quote card)\b/.test(
+      value
+    )
+  ) {
+    return "text_poster";
+  }
+  if (
+    /\b(product|packaging|mockup|bottle|perfume|watch|phone|laptop|shoe)\b/.test(
+      value
+    )
+  ) {
+    return "product";
+  }
+  if (
+    /\b(landscape|scenic|mountain|sunrise|sunset|forest|beach|lake|waterfall|cityscape|nature)\b/.test(
+      value
+    )
+  ) {
+    return "landscape_scene";
+  }
+  if (
+    /\b(actor|actress|celebrity|celeb|portrait|headshot|person|face|model)\b/.test(
+      value
+    ) ||
+    /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(prompt)
+  ) {
+    return "portrait_person";
+  }
+  return "generic";
+};
+
+const rewritePromptForQuality = (prompt, routeType) => {
+  const base = normalizeImagePrompt(prompt);
+  const variants = [base];
+
+  if (routeType === "portrait_person") {
+    variants.push(
+      `Photorealistic portrait of ${base}, accurate facial likeness, natural skin texture, subtle cinematic lighting, 85mm lens, ultra detailed`
+    );
+    variants.push(
+      `${base}, realistic face, high-detail professional portrait photo`
+    );
+  } else if (routeType === "logo_icon") {
+    variants.push(
+      `${base}, clean vector logo, minimal flat design, strong contrast, centered composition, no watermark`
+    );
+    variants.push(`${base}, premium app icon, minimal geometry, crisp edges`);
+  } else if (routeType === "text_poster") {
+    variants.push(
+      `${base}, poster design, high contrast composition, typography-focused layout, clear readable text areas`
+    );
+    variants.push(
+      `${base}, modern banner style, balanced negative space, sharp details`
+    );
+  } else if (routeType === "product") {
+    variants.push(
+      `${base}, premium studio product photo, controlled softbox lighting, sharp edges, realistic material details`
+    );
+    variants.push(
+      `${base}, e-commerce product shot on clean background, ultra detailed`
+    );
+  } else if (routeType === "landscape_scene") {
+    variants.push(
+      `${base}, cinematic landscape photography, dramatic natural lighting, depth and atmospheric perspective`
+    );
+    variants.push(`${base}, highly detailed scenic wide shot, natural colors`);
+  } else if (routeType === "anime_illustration") {
+    variants.push(
+      `${base}, high-quality anime illustration, dynamic composition, clean line art, vibrant color grading`
+    );
+    variants.push(`${base}, detailed manga style art, polished shading`);
+  } else {
+    variants.push(
+      `${base}, highly detailed, professional composition, clean lighting`
+    );
+  }
+
+  return [...new Set(variants.map((v) => v.trim()).filter(Boolean))].slice(
+    0,
+    3
+  );
+};
+
+const buildModelPriority = (routeType) => {
+  const hasPollinationsAuth = Boolean(String(pollinationsApiKey || "").trim());
+  if (!hasPollinationsAuth) {
+    // No API key: prioritize free/public models first to avoid auth failures.
+    if (routeType === "logo_icon")
+      return ["flux", "turbo", "seedream", "gptimage"];
+    if (routeType === "text_poster")
+      return ["flux", "turbo", "seedream", "gptimage"];
+    return ["flux", "turbo", "seedream", "gptimage"];
+  }
+  if (routeType === "logo_icon")
+    return ["gptimage", "seedream", "flux", "turbo"];
+  if (routeType === "text_poster")
+    return ["gptimage", "flux", "seedream", "turbo"];
+  return ["gptimage", "flux", "seedream", "turbo"];
+};
+
+const createPollinationsCandidate = ({
+  prompt,
+  model,
+  baseQuery,
+  routeType,
+  promptUsed,
+  extraQuery = "",
+}) => {
+  const encoded = encodeURIComponent(prompt);
+  const modelQuery = model ? `&model=${encodeURIComponent(model)}` : "";
+  return {
+    url: `https://gen.pollinations.ai/image/${encoded}?${baseQuery}${extraQuery}${modelQuery}`,
+    model: model || "default",
+    routeType,
+    promptUsed,
+  };
+};
+
 const buildPollinationsImageCandidates = (prompt, { width, height, seed }) => {
   const safeWidth = clampImageSize(width, 1024);
   const safeHeight = clampImageSize(height, 1024);
@@ -941,23 +1135,98 @@ const buildPollinationsImageCandidates = (prompt, { width, height, seed }) => {
   const safeSeed = Number.isFinite(parsedSeed)
     ? Math.abs(parsedSeed)
     : Math.floor(Math.random() * 99999999);
-  const encoded = encodeURIComponent(prompt);
+  const normalizedPrompt = normalizeImagePrompt(prompt);
+  const routeType = classifyPromptType(normalizedPrompt);
+  const promptVariants = rewritePromptForQuality(normalizedPrompt, routeType);
+  const modelPriority = buildModelPriority(routeType);
   const baseQuery = `width=${safeWidth}&height=${safeHeight}&nologo=true&seed=${safeSeed}`;
+  const candidates = [];
+  const seenUrls = new Set();
+
+  for (const variant of promptVariants) {
+    for (const model of modelPriority) {
+      const candidate = createPollinationsCandidate({
+        prompt: variant,
+        model,
+        baseQuery,
+        routeType,
+        promptUsed: variant,
+      });
+      if (!seenUrls.has(candidate.url)) {
+        seenUrls.add(candidate.url);
+        candidates.push(candidate);
+      }
+    }
+    const defaultCandidate = createPollinationsCandidate({
+      prompt: variant,
+      model: null,
+      baseQuery,
+      routeType,
+      promptUsed: variant,
+    });
+    if (!seenUrls.has(defaultCandidate.url)) {
+      seenUrls.add(defaultCandidate.url);
+      candidates.push(defaultCandidate);
+    }
+  }
 
   return {
     safeSeed,
     safeWidth,
     safeHeight,
-    urls: [
-      `https://gen.pollinations.ai/image/${encoded}?${baseQuery}&model=flux`,
-      `https://gen.pollinations.ai/image/${encoded}?${baseQuery}&model=turbo`,
-      `https://gen.pollinations.ai/image/${encoded}?${baseQuery}`,
-      `https://gen.pollinations.ai/image/${encoded}?model=flux`,
-      `https://gen.pollinations.ai/image/${encoded}?model=turbo`,
-      `https://image.pollinations.ai/prompt/${encoded}?${baseQuery}`,
-      `https://image.pollinations.ai/prompt/${encoded}?${baseQuery}&model=flux`,
-      `https://image.pollinations.ai/prompt/${encoded}?${baseQuery}&model=turbo`,
-    ],
+    routeType,
+    modelPriority,
+    promptVariants,
+    candidates,
+    urls: candidates.map((c) => c.url),
+  };
+};
+
+const buildPollinationsEditCandidates = (
+  prompt,
+  { width, height, seed, referenceImage }
+) => {
+  const base = buildPollinationsImageCandidates(prompt, {
+    width,
+    height,
+    seed,
+  });
+  const encodedImage = encodeURIComponent(referenceImage);
+  const baseQuery = `width=${base.safeWidth}&height=${base.safeHeight}&nologo=true&seed=${base.safeSeed}`;
+  const extraQuery = `&image=${encodedImage}`;
+  const hasPollinationsAuth = Boolean(String(pollinationsApiKey || "").trim());
+  const editModels = hasPollinationsAuth
+    ? [...new Set(["kontext", "gptimage", ...base.modelPriority])]
+    : [...new Set([...base.modelPriority, "kontext", "gptimage"])];
+  const candidates = [];
+  const seenUrls = new Set();
+
+  for (const variant of base.promptVariants) {
+    for (const model of editModels) {
+      const candidate = createPollinationsCandidate({
+        prompt: variant,
+        model,
+        baseQuery,
+        routeType: base.routeType,
+        promptUsed: variant,
+        extraQuery,
+      });
+      if (!seenUrls.has(candidate.url)) {
+        seenUrls.add(candidate.url);
+        candidates.push(candidate);
+      }
+    }
+  }
+
+  return {
+    safeSeed: base.safeSeed,
+    safeWidth: base.safeWidth,
+    safeHeight: base.safeHeight,
+    routeType: base.routeType,
+    modelPriority: editModels,
+    promptVariants: base.promptVariants,
+    candidates,
+    urls: candidates.map((c) => c.url),
   };
 };
 
@@ -970,45 +1239,90 @@ const extractPollinationsErrorMessage = (payload, fallback = "") => {
   return fallback;
 };
 
-const fetchPollinationsImage = async (candidateUrls) => {
-  const requestHeaders = { Accept: "image/*" };
-  if (pollinationsApiKey) requestHeaders.Authorization = `Bearer ${pollinationsApiKey}`;
+const summarizeAttemptRecords = (attempts = []) =>
+  attempts.map((a) => ({
+    attempt: a.attempt,
+    model: a.model,
+    status: a.status,
+    httpStatus: a.httpStatus,
+    latencyMs: a.latencyMs,
+    error: a.error,
+  }));
 
-  const expandedUrls = [];
-  for (const rawUrl of candidateUrls) {
-    if (typeof rawUrl !== "string" || !rawUrl.trim()) continue;
-    const url = rawUrl.trim();
-    if (!expandedUrls.includes(url)) expandedUrls.push(url);
-    if (pollinationsApiKey) {
-      try {
-        const withKey = new URL(url);
-        if (!withKey.searchParams.has("key")) {
-          withKey.searchParams.set("key", pollinationsApiKey);
-          const keyedUrl = withKey.toString();
-          if (!expandedUrls.includes(keyedUrl)) expandedUrls.push(keyedUrl);
-        }
-      } catch (e) {}
-    }
+const fetchPollinationsImage = async (candidateEntries) => {
+  let useAuthHeader = Boolean(String(pollinationsApiKey || "").trim());
+  const buildRequestHeaders = () => {
+    const headers = { Accept: "image/*" };
+    if (useAuthHeader) headers.Authorization = `Bearer ${pollinationsApiKey}`;
+    return headers;
+  };
+
+  const normalizedCandidates = [];
+  const seenUrls = new Set();
+  for (const entry of candidateEntries || []) {
+    const candidate =
+      typeof entry === "string"
+        ? { url: entry, model: "unknown", promptUsed: "", routeType: "generic" }
+        : {
+            url: entry?.url,
+            model: entry?.model || "unknown",
+            promptUsed: entry?.promptUsed || "",
+            routeType: entry?.routeType || "generic",
+          };
+    if (!candidate.url || typeof candidate.url !== "string") continue;
+    const value = candidate.url.trim();
+    if (!value || seenUrls.has(value)) continue;
+    seenUrls.add(value);
+    normalizedCandidates.push({ ...candidate, url: value });
   }
+
   let lastFailure = null;
   let lastAuthFailure = null;
+  const attempts = [];
 
-  for (const url of expandedUrls) {
+  for (let index = 0; index < normalizedCandidates.length; index++) {
+    const candidate = normalizedCandidates[index];
+    const startedAt = Date.now();
     let timeoutId;
     try {
       const controller = new AbortController();
-      timeoutId = setTimeout(() => controller.abort(), 12000);
-      const response = await fetch(url, {
-        headers: requestHeaders,
+      timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch(candidate.url, {
+        headers: buildRequestHeaders(),
         redirect: "follow",
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      const contentType = (response.headers.get("content-type") || "").toLowerCase();
+      const latencyMs = Date.now() - startedAt;
+
+      const contentType = (
+        response.headers.get("content-type") || ""
+      ).toLowerCase();
+
       if (response.ok && contentType.startsWith("image/")) {
         const buffer = Buffer.from(await response.arrayBuffer());
         if (!buffer.length) continue;
-        return { kind: "image", buffer, contentType, sourceUrl: url };
+        attempts.push({
+          attempt: index + 1,
+          model: candidate.model,
+          status: "success",
+          httpStatus: response.status,
+          latencyMs,
+          error: null,
+        });
+        return {
+          kind: "image",
+          buffer,
+          contentType,
+          sourceUrl: candidate.url,
+          modelUsed: candidate.model,
+          routeType: candidate.routeType,
+          promptUsed: candidate.promptUsed,
+          attempts,
+          attemptCount: attempts.length,
+          lastModelTried: candidate.model,
+        };
       }
 
       const rawText = await response.text();
@@ -1022,19 +1336,35 @@ const fetchPollinationsImage = async (candidateUrls) => {
         parsedPayload,
         rawText?.slice(0, 300)
       );
-      const authLike =
-        response.status === 401 ||
-        response.status === 403 ||
-        /auth|unauthoriz|api key|bearer/i.test(message || "");
-      if (authLike) {
-        lastAuthFailure = {
+      attempts.push({
+        attempt: index + 1,
+        model: candidate.model,
+        status: "http_error",
+        httpStatus: response.status,
+        latencyMs,
+        error: message?.slice(0, 180) || "Provider returned non-image response",
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        const authFailure = {
           kind: "auth_error",
-          status: response.status || 401,
-          message:
-            message ||
-            "Authentication required for Pollinations API. Add POLLINATIONS_API_KEY in backend/.env",
-          sourceUrl: url,
+          status: response.status,
+          message: message || "Invalid or missing Pollinations API key.",
+          sourceUrl: candidate.url,
+          attempts,
+          attemptCount: attempts.length,
+          lastModelTried: candidate.model,
+          routeType: candidate.routeType,
         };
+        lastAuthFailure = authFailure;
+        // If auth header is enabled and rejected, automatically retry
+        // the same request without Authorization to allow public/free fallback.
+        if (useAuthHeader) {
+          useAuthHeader = false;
+          index--;
+          continue;
+        }
+        // If no key configured, continue trying free/public fallback models.
         continue;
       }
 
@@ -1042,103 +1372,240 @@ const fetchPollinationsImage = async (candidateUrls) => {
         kind: "provider_error",
         status: response.status || 502,
         message: message || "Image provider unavailable. Please try again.",
-        sourceUrl: url,
+        sourceUrl: candidate.url,
+        attempts,
+        attemptCount: attempts.length,
+        lastModelTried: candidate.model,
+        routeType: candidate.routeType,
       };
     } catch (e) {
+      clearTimeout(timeoutId);
+      const latencyMs = Date.now() - startedAt;
+      const isTimeout = e.name === "AbortError";
+      attempts.push({
+        attempt: index + 1,
+        model: candidate.model,
+        status: isTimeout ? "timeout" : "network_error",
+        httpStatus: null,
+        latencyMs,
+        error: isTimeout
+          ? "Image generation timed out. Try a simpler prompt."
+          : "Image provider unavailable. Please try again.",
+      });
       lastFailure = {
         kind: "provider_error",
         status: 502,
-        message: "Image provider unavailable. Please try again.",
-        sourceUrl: url,
+        message: isTimeout
+          ? "Image generation timed out. Try a simpler prompt."
+          : "Image provider unavailable. Please try again.",
+        sourceUrl: candidate.url,
+        attempts,
+        attemptCount: attempts.length,
+        lastModelTried: candidate.model,
+        routeType: candidate.routeType,
       };
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
+
   if (lastFailure) return lastFailure;
   if (lastAuthFailure) return lastAuthFailure;
   return {
     kind: "provider_error",
     status: 502,
     message: "Image provider unavailable. Please try again.",
+    attempts,
+    attemptCount: attempts.length,
+    lastModelTried: attempts.length
+      ? attempts[attempts.length - 1].model
+      : null,
+    routeType: "generic",
   };
 };
 
 app.get("/image/proxy", async (req, res) => {
-  const prompt = typeof req.query.prompt === "string" ? req.query.prompt.trim() : "";
+  const prompt =
+    typeof req.query.prompt === "string" ? req.query.prompt.trim() : "";
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
-
-  const { safeSeed, safeWidth, safeHeight, urls } = buildPollinationsImageCandidates(
-    prompt,
-    {
+  const { imageUrl, safeSeed, safeWidth, safeHeight, modelUsed } =
+    buildDirectPollinationsUrl({
+      prompt,
       width: req.query.width,
       height: req.query.height,
       seed: req.query.seed,
+      model: req.query.model,
+    });
+  try {
+    const response = await fetch(imageUrl, {
+      headers: { Accept: "image/*" },
+      redirect: "follow",
+    });
+    const contentType = (
+      response.headers.get("content-type") || ""
+    ).toLowerCase();
+    if (!response.ok || !contentType.startsWith("image/")) {
+      return res.status(response.status || 502).json({
+        error: "Image provider unavailable. Please try again.",
+      });
     }
-  );
-
-  const image = await fetchPollinationsImage(urls);
-  if (image.kind === "auth_error") {
-    return res.status(401).json({ error: image.message });
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.set("Content-Type", contentType);
+    res.set("Cache-Control", "no-store");
+    res.set("X-Pollinations-Seed", String(safeSeed));
+    res.set("X-Pollinations-Size", `${safeWidth}x${safeHeight}`);
+    res.set("X-Pollinations-Model", modelUsed);
+    res.send(buffer);
+  } catch (e) {
+    return res.status(502).json({
+      error: "Image provider unavailable. Please try again.",
+    });
   }
-  if (image.kind !== "image") {
-    return res.status(502).json({ error: image.message });
-  }
-
-  res.set("Content-Type", image.contentType);
-  res.set("Cache-Control", "no-store");
-  res.set("X-Pollinations-Seed", String(safeSeed));
-  res.set("X-Pollinations-Size", `${safeWidth}x${safeHeight}`);
-  res.send(image.buffer);
 });
 
 app.post("/image/generate", async (req, res) => {
-  const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+  const prompt =
+    typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
-  const { safeSeed, safeWidth, safeHeight, urls } = buildPollinationsImageCandidates(prompt, {
+  // Use robust candidate generation with fallbacks (Flux -> Turbo -> etc)
+  const candidates = buildPollinationsImageCandidates(prompt, {
     width: req.body?.width,
     height: req.body?.height,
     seed: req.body?.seed,
   });
-  const params = new URLSearchParams({
-    prompt,
-    seed: String(safeSeed),
-    width: String(safeWidth),
-    height: String(safeHeight),
-  });
-  const baseUrl = `${req.protocol}://${req.get("host")}`;
-  const proxyUrl = `${baseUrl}/image/proxy?${params.toString()}`;
-  const image = await fetchPollinationsImage(urls);
 
-  if (image.kind === "auth_error") {
-    return res.status(401).json({
-      error: image.message,
-      hint: "Set POLLINATIONS_API_KEY in backend/.env and restart backend.",
-    });
-  }
+  // Try to fetch image with retries/fallbacks on the backend
+  const result = await fetchPollinationsImage(candidates.candidates);
 
-  if (image.kind === "image") {
-    const imageDataUrl = `data:${image.contentType};base64,${image.buffer.toString("base64")}`;
+  if (result.kind === "image") {
+    const base64Url = `data:${
+      result.contentType
+    };base64,${result.buffer.toString("base64")}`;
     return res.json({
-      imageUrl: imageDataUrl,
-      proxyUrl,
-      sourceUrl: image.sourceUrl,
-      seed: safeSeed,
-      width: safeWidth,
-      height: safeHeight,
+      imageUrl: base64Url,
+      seed: candidates.safeSeed,
+      width: candidates.safeWidth,
+      height: candidates.safeHeight,
+      modelUsed: result.modelUsed,
+      routeType: result.routeType,
+      promptUsed: result.promptUsed,
+      attemptCount: result.attemptCount,
     });
   }
 
-  res.status(502).json({
-    error: image.message || "Image provider unavailable. Please try again.",
-    imageUrl: proxyUrl,
-    proxyUrl,
-    directUrls: urls,
-    seed: safeSeed,
-    width: safeWidth,
-    height: safeHeight,
+  // If all attempts failed
+  return res.status(502).json({
+    error: result.message || "Image generation failed",
+    attemptSummary: summarizeAttemptRecords(result.attempts),
   });
+});
+
+app.post("/image/edit", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file)
+      return res.status(400).json({ error: "Image file required" });
+    if (req.file.mimetype === "application/pdf") {
+      return res
+        .status(400)
+        .json({ error: "PDF is not supported for image edit" });
+    }
+
+    const prompt =
+      typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+    if (!prompt) return res.status(400).json({ error: "Edit prompt required" });
+
+    const referenceDataUrl = `data:${
+      req.file.mimetype
+    };base64,${req.file.buffer.toString("base64")}`;
+
+    // Direct reference-image editing can fail on long data URLs.
+    // Try it only for small payloads, then fallback to AI-guided prompt remix.
+    if (referenceDataUrl.length <= 6500) {
+      const direct = buildPollinationsEditCandidates(prompt, {
+        width: req.body?.width,
+        height: req.body?.height,
+        seed: req.body?.seed,
+        referenceImage: referenceDataUrl,
+      });
+      const directImage = await fetchPollinationsImage(direct.candidates);
+      if (directImage.kind === "image") {
+        return res.json({
+          imageUrl: `data:${
+            directImage.contentType
+          };base64,${directImage.buffer.toString("base64")}`,
+          sourceUrl: directImage.sourceUrl,
+          seed: direct.safeSeed,
+          width: direct.safeWidth,
+          height: direct.safeHeight,
+          mode: "direct_edit",
+          promptUsed: directImage.promptUsed || prompt,
+          modelUsed: directImage.modelUsed || null,
+          routeType: direct.routeType || directImage.routeType || "generic",
+          attemptCount: directImage.attemptCount || 1,
+        });
+      }
+      if (directImage.kind === "auth_error") {
+        return res.status(401).json({
+          error: directImage.message,
+          hint: "Set POLLINATIONS_API_KEY in backend/.env and restart backend.",
+          routeType: direct.routeType || directImage.routeType || "generic",
+          attemptCount: directImage.attemptCount || 0,
+          lastModelTried: directImage.lastModelTried || null,
+          attemptSummary: summarizeAttemptRecords(directImage.attempts),
+        });
+      }
+    }
+
+    const remixPrompt = await buildImageEditPrompt(
+      req.file.buffer,
+      req.file.mimetype,
+      prompt
+    );
+    const remix = buildPollinationsImageCandidates(remixPrompt, {
+      width: req.body?.width,
+      height: req.body?.height,
+      seed: req.body?.seed,
+    });
+    const remixImage = await fetchPollinationsImage(remix.candidates);
+
+    if (remixImage.kind === "image") {
+      return res.json({
+        imageUrl: `data:${
+          remixImage.contentType
+        };base64,${remixImage.buffer.toString("base64")}`,
+        sourceUrl: remixImage.sourceUrl,
+        seed: remix.safeSeed,
+        width: remix.safeWidth,
+        height: remix.safeHeight,
+        mode: "prompt_remix",
+        promptUsed: remixImage.promptUsed || remixPrompt,
+        modelUsed: remixImage.modelUsed || null,
+        routeType: remix.routeType || remixImage.routeType || "generic",
+        attemptCount: remixImage.attemptCount || 1,
+      });
+    }
+
+    if (remixImage.kind === "auth_error") {
+      return res.status(401).json({
+        error: remixImage.message,
+        hint: "Set POLLINATIONS_API_KEY in backend/.env and restart backend.",
+        routeType: remix.routeType || remixImage.routeType || "generic",
+        attemptCount: remixImage.attemptCount || 0,
+        lastModelTried: remixImage.lastModelTried || null,
+        attemptSummary: summarizeAttemptRecords(remixImage.attempts),
+      });
+    }
+
+    return res.status(502).json({
+      error: remixImage.message || "Could not edit image right now. Try again.",
+      mode: "failed",
+      routeType: remix.routeType || remixImage.routeType || "generic",
+      attemptCount: remixImage.attemptCount || 0,
+      lastModelTried: remixImage.lastModelTried || null,
+      attemptSummary: summarizeAttemptRecords(remixImage.attempts),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Image edit failed" });
+  }
 });
 
 // ── IMAGE / PDF ROUTE ─────────────────────────────────────────────────────────

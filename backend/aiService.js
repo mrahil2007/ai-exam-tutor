@@ -392,6 +392,47 @@ If it contains notes or diagrams, explain the key concepts clearly.`,
   throw new Error("Could not process file. Please try again.");
 };
 
+// ── IMAGE EDIT PROMPT BUILDER (exported) ─────────────────────────────────────
+// Converts an uploaded image + edit instruction into a generation prompt
+// that preserves the source subject/style as much as possible.
+export const buildImageEditPrompt = async (
+  fileBuffer,
+  mimeType,
+  editInstruction = ""
+) => {
+  const safeInstruction = (editInstruction || "").trim();
+  if (!safeInstruction) return "Create an edited version of this image.";
+
+  const base64Data = fileBuffer.toString("base64");
+  const contents = [
+    {
+      role: "user",
+      parts: [
+        { inline_data: { mime_type: mimeType, data: base64Data } },
+        {
+          text: `You are writing a text-to-image prompt for image editing.
+Task: keep the main subject/composition of the reference image, but apply this exact edit instruction: "${safeInstruction}".
+Return ONLY one concise generation prompt sentence.
+Do not include markdown, numbering, or explanations.`,
+        },
+      ],
+    },
+  ];
+
+  try {
+    const prompt = await callGemini(contents, "General", true);
+    const cleaned = prompt
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cleaned.length >= 12) return cleaned.slice(0, 700);
+  } catch (err) {
+    console.warn("⚠️ buildImageEditPrompt Gemini failed:", err.message);
+  }
+
+  return `Same image subject and composition, ${safeInstruction}, realistic details, high quality`;
+};
+
 // ── AGENT FUNCTION (Gemini Function Calling) ──────────────────────────────────
 // Replaces keyword/regex routing. Gemini decides which tool to use.
 
