@@ -1,6 +1,17 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
+import {
+  GoogleAuthProvider,
+  RecaptchaVerifier,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut,
+  signInWithEmailAndPassword,
+  signInWithPhoneNumber,
+  signInWithPopup,
+} from "firebase/auth";
 import DeleteAccount from "./pages/DeleteAccount";
+import { firebaseAuth, hasFirebaseConfig } from "./firebase";
 
 // ── TYPING ANIMATION ──────────────────────────────────────────────────────────
 const typeText = (text, setMessages, onDone) => {
@@ -40,6 +51,31 @@ const getUserId = () => {
     localStorage.setItem("examai_userId", userId);
   }
   return userId;
+};
+
+const sanitizeCountryCode = (value = "+91") => {
+  const digits = String(value).replace(/\D/g, "");
+  return digits ? `+${digits}` : "+91";
+};
+
+const DEFAULT_PHONE_COUNTRY_CODE = sanitizeCountryCode(
+  import.meta.env.VITE_DEFAULT_PHONE_COUNTRY_CODE || "+91"
+);
+
+const normalizePhoneToE164 = (input = "") => {
+  const value = input.trim();
+  if (!value) return null;
+
+  if (value.startsWith("+")) {
+    const cleaned = `+${value.slice(1).replace(/\D/g, "")}`;
+    return /^\+\d{8,15}$/.test(cleaned) ? cleaned : null;
+  }
+
+  const localDigits = value.replace(/\D/g, "").replace(/^0+/, "");
+  if (!localDigits) return null;
+
+  const e164 = `${DEFAULT_PHONE_COUNTRY_CODE}${localDigits}`;
+  return /^\+\d{8,15}$/.test(e164) ? e164 : null;
 };
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -719,6 +755,714 @@ function TabBar({ activeTab, onTabChange }) {
   );
 }
 
+const getAuthErrorMessage = (error) => {
+  const code = error?.code || "";
+  if (code === "auth/invalid-credential") return "Invalid email or password.";
+  if (code === "auth/email-already-in-use")
+    return "This email is already registered. Sign in instead.";
+  if (code === "auth/weak-password")
+    return "Password should be at least 6 characters.";
+  if (code === "auth/invalid-email") return "Please enter a valid email.";
+  if (code === "auth/popup-closed-by-user")
+    return "Google sign-in was closed before completion.";
+  if (code === "auth/popup-blocked")
+    return "Popup was blocked. Allow popups and try again.";
+  if (code === "auth/invalid-app-credential") {
+    return "Phone verification needs manual reCAPTCHA. Complete the checkbox and send OTP again.";
+  }
+  if (code === "auth/invalid-phone-number")
+    return `Enter a valid phone number. Country code is auto-added (default ${DEFAULT_PHONE_COUNTRY_CODE}).`;
+  if (code === "auth/too-many-requests")
+    return "Too many attempts. Please wait and try again.";
+  if (code === "auth/invalid-verification-code")
+    return "Invalid OTP. Please check and retry.";
+  if (code === "auth/missing-verification-code") return "Please enter the OTP.";
+  if (code === "auth/quota-exceeded")
+    return "SMS quota reached for now. Try again later.";
+  if (
+    code === "auth/invalid-api-key" ||
+    code === "auth/api-key-not-valid.-please-pass-a-valid-api-key."
+  ) {
+    return "Firebase API key is invalid. Check VITE_FIREBASE_API_KEY in ai-exam-frontend/.env and restart Vite.";
+  }
+  if (typeof error?.message === "string" && error.message.includes("api-key")) {
+    return "Firebase API key looks invalid. Update VITE_FIREBASE_API_KEY and restart the frontend server.";
+  }
+  if (typeof error?.message === "string" && /timeout/i.test(error.message)) {
+    return "Verification timed out. Complete reCAPTCHA and retry sending OTP.";
+  }
+  return error?.message || "Authentication failed. Please try again.";
+};
+
+function AuthGateScreen({ tabId, authReady }) {
+  const [authMethod, setAuthMethod] = useState("google");
+  const [emailMode, setEmailMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [confirmationResult, setConfirmationResult] = useState(null);
+  const [loadingAction, setLoadingAction] = useState("");
+  const [error, setError] = useState("");
+  const [showManualRecaptcha, setShowManualRecaptcha] = useState(false);
+
+  const recaptchaContainerRef = useRef(null);
+  const recaptchaVerifierRef = useRef(null);
+  const tabLabel = tabId === "chart" ? "Charts" : "Quiz";
+
+  const clearRecaptcha = useCallback(() => {
+    if (recaptchaVerifierRef.current) {
+      recaptchaVerifierRef.current.clear();
+      recaptchaVerifierRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearRecaptcha();
+    };
+  }, [clearRecaptcha]);
+
+  const getRecaptchaVerifier = useCallback(() => {
+    if (!firebaseAuth) throw new Error("Firebase authentication is not ready.");
+    if (recaptchaVerifierRef.current) return recaptchaVerifierRef.current;
+    if (!recaptchaContainerRef.current) {
+      throw new Error("reCAPTCHA failed to initialize. Reload and try again.");
+    }
+
+    recaptchaVerifierRef.current = new RecaptchaVerifier(
+      firebaseAuth,
+      recaptchaContainerRef.current,
+      {
+        size: showManualRecaptcha ? "normal" : "invisible",
+        callback: () => setError(""),
+        "expired-callback": () =>
+          setError("Verification expired. Please retry."),
+      }
+    );
+
+    return recaptchaVerifierRef.current;
+  }, [showManualRecaptcha]);
+
+  useEffect(() => {
+    if (authMethod !== "phone" || confirmationResult) return;
+    (async () => {
+      try {
+        const verifier = getRecaptchaVerifier();
+        await verifier.render();
+      } catch {
+        // keep silent; user gets explicit error on send
+      }
+    })();
+  }, [authMethod, confirmationResult, getRecaptchaVerifier]);
+
+  const withLoading = async (action, task) => {
+    try {
+      setError("");
+      setLoadingAction(action);
+      await task();
+    } catch (e) {
+      setError(getAuthErrorMessage(e));
+    } finally {
+      setLoadingAction("");
+    }
+  };
+
+  const switchMethod = (method) => {
+    setAuthMethod(method);
+    setError("");
+    setShowManualRecaptcha(false);
+  };
+
+  const handleGoogleSignIn = async () => {
+    if (!firebaseAuth) {
+      setError("Firebase authentication is not configured.");
+      return;
+    }
+
+    await withLoading("google", async () => {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      await signInWithPopup(firebaseAuth, provider);
+    });
+  };
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    if (!firebaseAuth) {
+      setError("Firebase authentication is not configured.");
+      return;
+    }
+    if (!email.trim() || !password) {
+      setError("Please enter both email and password.");
+      return;
+    }
+
+    await withLoading("email", async () => {
+      if (emailMode === "signup") {
+        await createUserWithEmailAndPassword(
+          firebaseAuth,
+          email.trim(),
+          password
+        );
+        return;
+      }
+      await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
+    });
+  };
+
+  const handleSendOtp = async () => {
+    if (!firebaseAuth) {
+      setError("Firebase authentication is not configured.");
+      return;
+    }
+
+    const normalizedPhone = normalizePhoneToE164(phoneNumber);
+    if (!normalizedPhone) {
+      setError(
+        `Enter a valid phone number. You can type without country code (default ${DEFAULT_PHONE_COUNTRY_CODE}).`
+      );
+      return;
+    }
+
+    await withLoading("otp-send", async () => {
+      try {
+        const verifier = getRecaptchaVerifier();
+        const widgetId = await verifier.render();
+        if (showManualRecaptcha) {
+          const captchaResponse =
+            window.grecaptcha?.getResponse(widgetId) || "";
+          if (!captchaResponse) {
+            throw new Error("Please complete the reCAPTCHA checkbox.");
+          }
+        }
+
+        const result = await signInWithPhoneNumber(
+          firebaseAuth,
+          normalizedPhone,
+          verifier
+        );
+        setConfirmationResult(result);
+        setOtpCode("");
+      } catch (e) {
+        const code = e?.code || "";
+        const message = String(e?.message || "");
+        if (
+          !showManualRecaptcha &&
+          (code === "auth/invalid-app-credential" || /timeout/i.test(message))
+        ) {
+          setShowManualRecaptcha(true);
+        }
+        clearRecaptcha();
+        throw e;
+      }
+    });
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!confirmationResult) {
+      setError("Request OTP first.");
+      return;
+    }
+
+    await withLoading("otp-verify", async () => {
+      await confirmationResult.confirm(otpCode.trim());
+      setConfirmationResult(null);
+      setOtpCode("");
+      setPhoneNumber("");
+    });
+  };
+
+  const disabled = Boolean(loadingAction);
+
+  const AUTH_STYLES = `
+    @keyframes authOrbDrift {
+      0%, 100% { transform: translateY(0px) scale(1); }
+      50% { transform: translateY(-16px) scale(1.04); }
+    }
+    .auth-shell {
+      position: relative;
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background:
+        radial-gradient(900px 420px at -10% -25%, rgba(16,163,127,0.22), transparent 60%),
+        radial-gradient(760px 360px at 120% -20%, rgba(56,189,248,0.16), transparent 65%),
+        linear-gradient(180deg, #17191d 0%, #101114 100%);
+    }
+    .auth-orb {
+      position: absolute;
+      border-radius: 999px;
+      filter: blur(18px);
+      pointer-events: none;
+      animation: authOrbDrift 9s ease-in-out infinite;
+    }
+    .auth-orb-one {
+      width: 190px;
+      height: 190px;
+      background: rgba(16,163,127,0.2);
+      top: 8%;
+      right: 10%;
+    }
+    .auth-orb-two {
+      width: 140px;
+      height: 140px;
+      background: rgba(56,189,248,0.16);
+      bottom: 12%;
+      left: 9%;
+      animation-delay: 1.3s;
+    }
+    .auth-card {
+      position: relative;
+      z-index: 2;
+      width: min(560px, 100%);
+      border-radius: 22px;
+      border: 1px solid #2b3935;
+      background: linear-gradient(160deg, rgba(20,23,26,0.97), rgba(13,15,18,0.97));
+      box-shadow: 0 24px 64px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+      padding: 22px;
+    }
+    .auth-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      border: 1px solid #2d5148;
+      background: #12221f;
+      color: #75d9be;
+      padding: 4px 10px;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .auth-title {
+      margin-top: 11px;
+      color: #f4f8f7;
+      font-size: clamp(1.15rem, 1.3vw, 1.34rem);
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+    .auth-subtitle {
+      margin-top: 6px;
+      color: #9aa7a3;
+      font-size: 0.86rem;
+      line-height: 1.5;
+    }
+    .auth-method-row {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .auth-method-btn {
+      border: 1px solid #2a3131;
+      border-radius: 11px;
+      background: #171c1f;
+      color: #9aa6a5;
+      font-size: 0.77rem;
+      font-weight: 600;
+      padding: 8px 6px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .auth-method-btn.active {
+      border-color: #1d6653;
+      background: linear-gradient(135deg, #153830, #133129);
+      color: #d8fef3;
+      box-shadow: 0 6px 20px rgba(16,163,127,0.2);
+    }
+    .auth-method-btn:disabled {
+      opacity: 0.58;
+      cursor: not-allowed;
+    }
+    .auth-panel {
+      margin-top: 14px;
+      border-radius: 14px;
+      border: 1px solid #283131;
+      background: rgba(12,15,17,0.74);
+      padding: 13px;
+    }
+    .auth-input {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid #2f3837;
+      background: #171c1f;
+      color: #f3f7f7;
+      padding: 11px 12px;
+      font-size: 0.86rem;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .auth-input::placeholder { color: #6d7877; }
+    .auth-input:focus {
+      outline: none;
+      border-color: #2aa987;
+      box-shadow: 0 0 0 3px rgba(16,163,127,0.16);
+    }
+    .auth-google-btn,
+    .auth-primary-btn,
+    .auth-secondary-btn {
+      width: 100%;
+      margin-top: 10px;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.86rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+    }
+    .auth-google-btn {
+      border: 1px solid #2f3a3a;
+      background: linear-gradient(135deg, #1b2024, #161b1f);
+      color: #ecf0ef;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .auth-google-dot {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.73rem;
+      font-weight: 800;
+      color: #111;
+      background: linear-gradient(135deg, #fde047, #f97316);
+    }
+    .auth-primary-btn {
+      border: none;
+      background: linear-gradient(135deg, #0fa57f, #0b8768);
+      color: #fff;
+      box-shadow: 0 10px 24px rgba(16,163,127,0.24);
+    }
+    .auth-secondary-btn {
+      border: 1px solid #1d6653;
+      background: #11231f;
+      color: #82e9cd;
+    }
+    .auth-google-btn:disabled,
+    .auth-primary-btn:disabled,
+    .auth-secondary-btn:disabled {
+      opacity: 0.58;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .auth-link-btn {
+      margin-top: 8px;
+      border: none;
+      background: transparent;
+      color: #8cc5f8;
+      font-size: 0.79rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0;
+    }
+    .auth-link-btn:disabled {
+      opacity: 0.58;
+      cursor: not-allowed;
+    }
+    .auth-help {
+      margin-top: 8px;
+      color: #73807d;
+      font-size: 0.76rem;
+      line-height: 1.45;
+    }
+    .auth-footnote {
+      margin-top: 12px;
+      color: #7a8884;
+      font-size: 0.73rem;
+      line-height: 1.45;
+      text-align: center;
+    }
+    .auth-error {
+      margin-top: 12px;
+      border: 1px solid #6d2f35;
+      border-radius: 10px;
+      background: #31151a;
+      color: #f7a6b0;
+      padding: 9px 10px;
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+    .auth-status {
+      color: #9cb4ae;
+      font-size: 0.88rem;
+      text-align: center;
+      line-height: 1.55;
+      padding: 8px 2px;
+    }
+    .auth-panel-grid {
+      display: grid;
+      gap: 8px;
+    }
+    @media (max-width: 680px) {
+      .auth-card {
+        border-radius: 18px;
+        padding: 16px;
+      }
+      .auth-method-row {
+        gap: 6px;
+      }
+      .auth-method-btn {
+        font-size: 0.72rem;
+      }
+      .auth-shell {
+        align-items: flex-start;
+        padding-top: 24px;
+      }
+    }
+  `;
+
+  const renderShell = (content) => (
+    <div className="auth-shell">
+      <style>{AUTH_STYLES}</style>
+      <div className="auth-orb auth-orb-one" />
+      <div className="auth-orb auth-orb-two" />
+      <div className="auth-card">{content}</div>
+    </div>
+  );
+
+  if (!hasFirebaseConfig) {
+    return renderShell(
+      <>
+        <div className="auth-badge">Secure Access</div>
+        <div className="auth-title">Firebase configuration missing</div>
+        <div className="auth-status">
+          Add all `VITE_FIREBASE_*` variables in `ai-exam-frontend/.env`, then
+          restart your frontend server.
+        </div>
+      </>
+    );
+  }
+
+  if (!authReady) {
+    return renderShell(
+      <>
+        <div className="auth-badge">Secure Access</div>
+        <div className="auth-title">Checking sign-in status</div>
+        <div className="auth-status">Please wait...</div>
+      </>
+    );
+  }
+
+  return renderShell(
+    <>
+      <div className="auth-badge">Secure Access</div>
+      <div className="auth-title">Sign in to unlock {tabLabel}</div>
+      <div className="auth-subtitle">
+        Login is required for {tabLabel}. Chat and Planner stay available
+        without sign in.
+      </div>
+
+      <div className="auth-method-row">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => switchMethod("google")}
+          className={`auth-method-btn ${
+            authMethod === "google" ? "active" : ""
+          }`}
+        >
+          Google
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => switchMethod("email")}
+          className={`auth-method-btn ${
+            authMethod === "email" ? "active" : ""
+          }`}
+        >
+          Email
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => switchMethod("phone")}
+          className={`auth-method-btn ${
+            authMethod === "phone" ? "active" : ""
+          }`}
+        >
+          Phone
+        </button>
+      </div>
+
+      {authMethod === "google" && (
+        <div className="auth-panel">
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={disabled}
+            className="auth-google-btn"
+          >
+            <span className="auth-google-dot">G</span>
+            {loadingAction === "google"
+              ? "Connecting Google..."
+              : "Continue with Google"}
+          </button>
+          <div className="auth-help">
+            Fastest option if your device already has a Google account signed
+            in.
+          </div>
+        </div>
+      )}
+
+      {authMethod === "email" && (
+        <form className="auth-panel auth-panel-grid" onSubmit={handleEmailAuth}>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email address"
+            autoComplete="email"
+            className="auth-input"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            autoComplete={
+              emailMode === "signup" ? "new-password" : "current-password"
+            }
+            className="auth-input"
+          />
+          <button
+            type="submit"
+            disabled={disabled}
+            className="auth-primary-btn"
+          >
+            {loadingAction === "email"
+              ? emailMode === "signup"
+                ? "Creating account..."
+                : "Signing in..."
+              : emailMode === "signup"
+              ? "Create account"
+              : "Sign in"}
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            className="auth-link-btn"
+            onClick={() =>
+              setEmailMode((prev) => (prev === "signup" ? "login" : "signup"))
+            }
+          >
+            {emailMode === "signup"
+              ? "Already have an account? Sign in"
+              : "Need an account? Sign up"}
+          </button>
+        </form>
+      )}
+
+      {authMethod === "phone" && (
+        <div className="auth-panel auth-panel-grid">
+          <input
+            type="tel"
+            value={phoneNumber}
+            onChange={(e) => setPhoneNumber(e.target.value)}
+            placeholder="9876543210"
+            autoComplete="tel"
+            className="auth-input"
+          />
+
+          {!confirmationResult ? (
+            <button
+              type="button"
+              onClick={handleSendOtp}
+              disabled={disabled}
+              className="auth-secondary-btn"
+            >
+              {loadingAction === "otp-send" ? "Sending OTP..." : "Send OTP"}
+            </button>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value)}
+                placeholder="Enter OTP code"
+                autoComplete="one-time-code"
+                className="auth-input"
+              />
+              <button
+                type="button"
+                onClick={handleVerifyOtp}
+                disabled={disabled}
+                className="auth-primary-btn"
+              >
+                {loadingAction === "otp-verify" ? "Verifying..." : "Verify OTP"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmationResult(null);
+                  setOtpCode("");
+                }}
+                className="auth-link-btn"
+              >
+                Change number / resend
+              </button>
+            </>
+          )}
+          <div className="auth-help">
+            Enter mobile number only. Country code will auto-apply as{" "}
+            <code>{DEFAULT_PHONE_COUNTRY_CODE}</code>.
+          </div>
+          <div
+            ref={recaptchaContainerRef}
+            style={{
+              minHeight:
+                authMethod === "phone" &&
+                !confirmationResult &&
+                showManualRecaptcha
+                  ? 78
+                  : 1,
+              width:
+                authMethod === "phone" &&
+                !confirmationResult &&
+                showManualRecaptcha
+                  ? "100%"
+                  : 1,
+              opacity:
+                authMethod === "phone" &&
+                !confirmationResult &&
+                showManualRecaptcha
+                  ? 1
+                  : 0,
+              marginTop:
+                authMethod === "phone" &&
+                !confirmationResult &&
+                showManualRecaptcha
+                  ? 8
+                  : 0,
+              overflow: "hidden",
+              pointerEvents:
+                authMethod === "phone" &&
+                !confirmationResult &&
+                showManualRecaptcha
+                  ? "auto"
+                  : "none",
+            }}
+          />
+        </div>
+      )}
+
+      <div className="auth-footnote">
+        Sign in once and we will keep you logged in on this device.
+      </div>
+
+      {error && <div className="auth-error">{error}</div>}
+    </>
+  );
+}
+
 // ── QUESTION TYPE DETECTOR & RENDERER ────────────────────────────────────────
 const isPipeTable = (text) => text.includes(" | ") && /[A-D]\.\s/.test(text);
 const isMatchingQuestion = (text) =>
@@ -933,7 +1677,7 @@ function SmartQuestionDisplay({ question }) {
 }
 
 // ── QUIZ SCREEN ───────────────────────────────────────────────────────────────
-function QuizScreen({ exam, API_URL }) {
+function QuizScreen({ exam, API_URL, userId = USER_ID }) {
   const [screen, setScreen] = useState("setup");
   const [topic, setTopic] = useState("");
   const [selectedState, setSelectedState] = useState("");
@@ -973,7 +1717,7 @@ function QuizScreen({ exam, API_URL }) {
           topic,
           exam,
           count,
-          userId: USER_ID,
+          userId,
           ...(exam === "State PCS" && selectedState
             ? { state: selectedState }
             : {}),
@@ -1030,7 +1774,7 @@ function QuizScreen({ exam, API_URL }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: USER_ID,
+          userId,
           topic,
           exam,
           score: finalScore,
@@ -1047,7 +1791,7 @@ function QuizScreen({ exam, API_URL }) {
     setLoadingHistory(true);
     setScreen("history");
     try {
-      const res = await fetch(`${API_URL}/quiz/history/${USER_ID}`);
+      const res = await fetch(`${API_URL}/quiz/history/${userId}`);
       setHistory(await res.json());
     } catch (e) {}
     setLoadingHistory(false);
@@ -2954,11 +3698,36 @@ function ChatScreen({ exam, onChangeExam, API_URL }) {
     await sendMessageWithText(input.trim(), false);
   };
 
-  const handleFileUpload = (file) => {
-    if (!file || loading) return;
-    setPendingFile(file);
-    setShowAttachMenu(false);
-  };
+  const handleFileUpload = useCallback(
+    (file) => {
+      if (!file || loading) return;
+      setPendingFile(file);
+      setShowAttachMenu(false);
+    },
+    [loading]
+  );
+
+  useEffect(() => {
+    const handlePaste = (event) => {
+      if (pendingFile || loading) return;
+      const items = (event.clipboardData || window.clipboardData)?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            handleFileUpload(file);
+            event.preventDefault();
+            break;
+          }
+        }
+      }
+    };
+
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [handleFileUpload, pendingFile, loading]);
 
   const sendFileWithPrompt = async () => {
     if (!pendingFile || loading) return;
@@ -4752,7 +5521,7 @@ function ChartRenderer({ chartData }) {
 }
 
 // ── CHART SCREEN ──────────────────────────────────────────────────────────────
-function ChartScreen({ exam, API_URL }) {
+function ChartScreen({ exam, API_URL, userId = USER_ID }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [chartData, setChartData] = useState(null);
@@ -4810,7 +5579,7 @@ function ChartScreen({ exam, API_URL }) {
       const res = await fetch(`${API_URL}/chart/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, exam }),
+        body: JSON.stringify({ question, exam, userId }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -5120,6 +5889,10 @@ export default function App() {
   const [appState, setAppState] = useState("splash");
   const [exam, setExam] = useState(localStorage.getItem("examai_exam") || "");
   const [activeTab, setActiveTab] = useState("chat");
+  const [authUser, setAuthUser] = useState(null);
+  const [authReady, setAuthReady] = useState(!firebaseAuth);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState("");
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5050";
 
   const GLOBAL_STYLES = `
@@ -5159,6 +5932,34 @@ export default function App() {
     localStorage.setItem("examai_exam", e);
     setExam(e);
   };
+
+  const handleSignOut = async () => {
+    if (!firebaseAuth || !authUser || signingOut) return;
+    setSignOutError("");
+    setSigningOut(true);
+    try {
+      await signOut(firebaseAuth);
+    } catch (err) {
+      setSignOutError("Failed to sign out. Please try again.");
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!firebaseAuth) {
+      setAuthReady(true);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+      setAuthUser(user);
+      setAuthReady(true);
+      if (user) setSignOutError("");
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   if (appState === "splash")
     return (
@@ -5209,33 +6010,77 @@ export default function App() {
           flexShrink: 0,
         }}
       >
-        <button
-          onClick={() => setAppState("exam-select")}
+        <div
           style={{
-            background: "transparent",
-            border: "1px solid #2a2a2a",
-            borderRadius: 8,
-            padding: "4px 10px",
-            color: "#555",
-            fontSize: "0.72rem",
-            cursor: "pointer",
             display: "flex",
             alignItems: "center",
-            gap: 5,
-            fontFamily: "'Figtree', sans-serif",
+            gap: 8,
+            flexShrink: 0,
           }}
         >
-          {EXAM_META[exam]?.icon} {exam}
-          <svg width="8" height="5" viewBox="0 0 10 6" fill="none">
-            <path
-              d="M1 1L5 5L9 1"
-              stroke="#555"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
+          <button
+            onClick={() => setAppState("exam-select")}
+            style={{
+              background: "transparent",
+              border: "1px solid #2a2a2a",
+              borderRadius: 8,
+              padding: "4px 10px",
+              color: "#555",
+              fontSize: "0.72rem",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              fontFamily: "'Figtree', sans-serif",
+            }}
+          >
+            {EXAM_META[exam]?.icon} {exam}
+            <svg width="8" height="5" viewBox="0 0 10 6" fill="none">
+              <path
+                d="M1 1L5 5L9 1"
+                stroke="#555"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+          {authUser && (
+            <button
+              onClick={handleSignOut}
+              disabled={signingOut}
+              style={{
+                background: signingOut ? "#1f1616" : "transparent",
+                border: "1px solid #4b2626",
+                borderRadius: 8,
+                padding: "4px 10px",
+                color: signingOut ? "#b46d6d" : "#a26464",
+                fontSize: "0.72rem",
+                cursor: signingOut ? "not-allowed" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                fontFamily: "'Figtree', sans-serif",
+                opacity: signingOut ? 0.7 : 1,
+              }}
+            >
+              {signingOut ? "Signing out..." : "Sign out"}
+            </button>
+          )}
+        </div>
       </div>
+      {signOutError && (
+        <div
+          style={{
+            padding: "4px 12px 0",
+            color: "#e89a9a",
+            fontSize: "0.72rem",
+            textAlign: "right",
+            flexShrink: 0,
+          }}
+        >
+          {signOutError}
+        </div>
+      )}
       <SwipeView
         activeTab={activeTab}
         tabs={{
@@ -5246,9 +6091,17 @@ export default function App() {
               API_URL={API_URL}
             />
           ),
-          quiz: <QuizScreen exam={exam} API_URL={API_URL} />,
+          quiz: authUser ? (
+            <QuizScreen exam={exam} API_URL={API_URL} userId={authUser.uid} />
+          ) : (
+            <AuthGateScreen tabId="quiz" authReady={authReady} />
+          ),
           planner: <PlannerScreen exam={exam} API_URL={API_URL} />,
-          chart: <ChartScreen exam={exam} API_URL={API_URL} />,
+          chart: authUser ? (
+            <ChartScreen exam={exam} API_URL={API_URL} userId={authUser.uid} />
+          ) : (
+            <AuthGateScreen tabId="chart" authReady={authReady} />
+          ),
         }}
       />
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} />

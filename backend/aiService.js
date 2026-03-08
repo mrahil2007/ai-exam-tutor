@@ -169,7 +169,7 @@ const callGemini = async (contents, exam, isVision = false) => {
               maxOutputTokens: 8192,
               topP: 0.95,
               thinkingConfig: {
-                thinkingBudget: 1024, // limits hidden thinking tokens, saves room for output
+                thinkingBudget: 1024,
               },
             },
             safetySettings: [
@@ -211,7 +211,7 @@ const callGemini = async (contents, exam, isVision = false) => {
       if (!text) throw new Error("Gemini returned empty response");
 
       console.log(
-        `✅ gemini-2.5-flash-lite  answered using key ${attempt + 1} of ${
+        `✅ gemini-2.5-flash-lite answered using key ${attempt + 1} of ${
           GEMINI_KEYS.length
         }`
       );
@@ -240,7 +240,6 @@ const GROQ_CHAT_MODELS = [
 const callGroqFallback = async (prompt, exam, history = []) => {
   const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-  // If prompt has live search results, force Groq to use them not training data
   const hasSearchContext = prompt.includes("LIVE SEARCH RESULTS:");
 
   const systemContent = hasSearchContext
@@ -410,10 +409,12 @@ export const buildImageEditPrompt = async (
       parts: [
         { inline_data: { mime_type: mimeType, data: base64Data } },
         {
-          text: `You are writing a text-to-image prompt for image editing.
-Task: keep the main subject/composition of the reference image, but apply this exact edit instruction: "${safeInstruction}".
-Return ONLY one concise generation prompt sentence.
-Do not include markdown, numbering, or explanations.`,
+          text: `You are an expert at writing prompts for Flux image generation models.
+Task: Analyze the reference image carefully. Describe the subject's exact facial features, skin tone, hair color and style, eye color, body type, pose, expression, clothing, accessories, lighting, background, and overall mood.
+Then modify this description to apply the following edit: "${safeInstruction}".
+The generated prompt must preserve the subject's identity and likeness completely — only apply the requested change.
+End the prompt with these quality tags: photorealistic, sharp focus, 8K resolution, studio lighting, 85mm lens, highly detailed skin texture, professional photography.
+Return ONLY the final prompt string. No explanation, no markdown, no labels.`,
         },
       ],
     },
@@ -425,12 +426,49 @@ Do not include markdown, numbering, or explanations.`,
       .replace(/```[\s\S]*?```/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-    if (cleaned.length >= 12) return cleaned.slice(0, 700);
+    if (cleaned.length >= 12) return cleaned.slice(0, 900);
   } catch (err) {
     console.warn("⚠️ buildImageEditPrompt Gemini failed:", err.message);
   }
 
-  return `Same image subject and composition, ${safeInstruction}, realistic details, high quality`;
+  return `Same image subject and composition, ${safeInstruction}, photorealistic, sharp focus, 8K, studio lighting, highly detailed`;
+};
+
+// ── TEXT-TO-IMAGE PROMPT BUILDER (exported) ───────────────────────────────────
+// Enhances a plain user prompt into a detailed Flux-optimized generation prompt.
+export const buildTextToImagePrompt = async (userPrompt) => {
+  const safe = (userPrompt || "").trim();
+  if (!safe) return "A beautiful image, photorealistic, high quality";
+
+  const contents = [
+    {
+      role: "user",
+      parts: [
+        {
+          text: `You are an expert at writing prompts for Flux image generation models.
+Enhance this image generation request into a detailed, high-quality Flux prompt.
+Include: subject details, lighting, style, mood, camera settings, and quality tags.
+End with: photorealistic, sharp focus, 8K resolution, studio lighting, 85mm lens, highly detailed, professional photography.
+Return ONLY the prompt string. No explanation, no markdown, no labels.
+
+User request: "${safe}"`,
+        },
+      ],
+    },
+  ];
+
+  try {
+    const prompt = await callGemini(contents, "General", false);
+    const cleaned = prompt
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cleaned.length >= 12) return cleaned.slice(0, 900);
+  } catch (err) {
+    console.warn("⚠️ buildTextToImagePrompt Gemini failed:", err.message);
+  }
+
+  return `${safe}, photorealistic, sharp focus, 8K, studio lighting, highly detailed`;
 };
 
 // ── AGENT FUNCTION (Gemini Function Calling) ──────────────────────────────────
@@ -495,11 +533,9 @@ const AGENT_TOOLS = [
 
 export const askAIAgent = async (question, exam = "General") => {
   if (!GEMINI_KEYS.length) {
-    // No Gemini keys — skip agent, use direct answer
     return { action: "direct" };
   }
 
-  // Try up to GEMINI_KEYS.length times (Key Rotation for Agent)
   for (let attempt = 0; attempt < GEMINI_KEYS.length; attempt++) {
     const key = getNextGeminiKey();
 
@@ -558,7 +594,7 @@ Do NOT answer the question yourself. Just pick the right tool.`,
       return { action: "direct" };
     } catch (err) {
       console.warn("⚠️ Agent routing failed:", err.message);
-      continue; // Try next key on error
+      continue;
     }
   }
 

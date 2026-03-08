@@ -15,13 +15,14 @@ import {
   askAIWithImage,
   askAIAgent,
   buildImageEditPrompt,
+  buildTextToImagePrompt,
 } from "./aiService.js";
 import Groq from "groq-sdk";
 import { MongoClient, ObjectId } from "mongodb";
 import rateLimit from "express-rate-limit";
 
 const app = express();
-app.set("trust proxy", 1); // Trust first proxy
+app.set("trust proxy", 1);
 app.use(
   cors({
     origin: [
@@ -29,7 +30,7 @@ app.use(
       "https://www.examai-in.com",
       "https://ai-exam-tutor-ten.vercel.app",
       "http://localhost:5173",
-      "http://10.0.2.2:5050", // Android Emulator localhost alias
+      "http://10.0.2.2:5050",
     ],
     methods: ["GET", "POST", "PATCH", "DELETE"],
   })
@@ -37,8 +38,6 @@ app.use(
 app.use(express.json({ limit: "10kb" }));
 
 // ── RATE LIMITING ─────────────────────────────────────────────────────────────
-
-// General API — 100 requests per 15 minutes per IP
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -46,8 +45,6 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-// AI endpoints — 15 requests per minute per IP
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 15,
@@ -55,8 +52,6 @@ const aiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-// Quiz — 20 per hour per IP
 const quizLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
@@ -65,13 +60,12 @@ const quizLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Apply limits
-app.use(apiLimiter); // all routes
-app.use("/chat", aiLimiter); // chat endpoint
-app.use("/chart/generate", aiLimiter); // chart endpoint
-app.use("/image", aiLimiter); // image/PDF endpoint
-app.use("/quiz/generate", quizLimiter); // quiz endpoint
-app.use("/flashcards/generate", quizLimiter); // flashcard generation limit
+app.use(apiLimiter);
+app.use("/chat", aiLimiter);
+app.use("/chart/generate", aiLimiter);
+app.use("/image", aiLimiter);
+app.use("/quiz/generate", quizLimiter);
+app.use("/flashcards/generate", quizLimiter);
 
 const upload = multer();
 
@@ -85,8 +79,11 @@ if (!process.env.MONGODB_URI) {
 }
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const pollinationsApiKey =
-  process.env.POLLINATIONS_API_KEY || process.env.POLLINATIONS_KEY || "";
+const infipApiKey = process.env.INFIP_API_KEY || "";
+
+if (!infipApiKey) {
+  console.warn("⚠️  INFIP_API_KEY not set — image generation will fail.");
+}
 
 // ── MONGODB ───────────────────────────────────────────────────────────────────
 let db;
@@ -101,37 +98,28 @@ connectDB();
 const getChats = () => db.collection("chats");
 const getQuizResults = () => db.collection("quiz_results");
 const getPlanners = () => db.collection("study_planners");
-const getFlashcards = () => db.collection("flashcards"); // Added flashcard collection
+const getFlashcards = () => db.collection("flashcards");
 
 // ── MOBILE APP CONFIGURATION ──────────────────────────────────────────────────
-// Endpoint for the Android app to check on launch.
-// Helps with maintenance mode, forced updates, or feature flags.
 app.get("/mobile/config", (req, res) => {
   res.json({
-    minVersion: 1, // Increment this to force users to update
-    currentVersion: 1, // The latest version available
+    minVersion: 1,
+    currentVersion: 1,
     maintenanceMode: false,
-    features: {
-      aiChat: true,
-      voiceMode: true,
-    },
+    features: { aiChat: true, voiceMode: true },
   });
 });
 
-// ── LIVE SEARCH CACHE (1 hour) ─────────────────────────────
+// ── LIVE SEARCH CACHE (1 hour) ────────────────────────────────────────────────
 const searchCache = new Map();
-const SEARCH_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+const SEARCH_CACHE_DURATION = 60 * 60 * 1000;
 
 const fetchLiveSearchContext = async (query) => {
   if (!process.env.SERPER_API_KEY) return "";
-
   const cached = searchCache.get(query);
   const now = Date.now();
-
-  if (cached && now - cached.timestamp < SEARCH_CACHE_DURATION) {
+  if (cached && now - cached.timestamp < SEARCH_CACHE_DURATION)
     return cached.data;
-  }
-
   try {
     const response = await fetch("https://google.serper.dev/search", {
       method: "POST",
@@ -141,24 +129,13 @@ const fetchLiveSearchContext = async (query) => {
       },
       body: JSON.stringify({ q: query, num: 5 }),
     });
-
     const data = await response.json();
-
     if (!data.organic?.length) return "";
-
-    const results = data.organic.slice(0, 5).map((r, i) => {
-      return `${i + 1}. ${r.title}
-${r.snippet}
-Source: ${r.link}`;
-    });
-
+    const results = data.organic
+      .slice(0, 5)
+      .map((r, i) => `${i + 1}. ${r.title}\n${r.snippet}\nSource: ${r.link}`);
     const formatted = `LIVE SEARCH RESULTS:\n\n${results.join("\n\n")}`;
-
-    searchCache.set(query, {
-      data: formatted,
-      timestamp: now,
-    });
-
+    searchCache.set(query, { data: formatted, timestamp: now });
     return formatted;
   } catch (err) {
     console.error("Serper error:", err.message);
@@ -183,15 +160,12 @@ const fetchWorldBankData = async (countryCode, indicator) => {
   try {
     const indicatorCode = WORLD_BANK_INDICATORS[indicator];
     if (!indicatorCode) return "";
-
     const url = `https://api.worldbank.org/v2/country/${countryCode}/indicator/${indicatorCode}?format=json&mrv=3`;
     const response = await fetch(url);
     if (!response.ok) return "";
-
     const data = await response.json();
     const records = data?.[1]?.filter((r) => r.value !== null);
     if (!records?.length) return "";
-
     const lines = records
       .map((r) => `  • ${r.date}: ${Number(r.value).toLocaleString()}`)
       .join("\n");
@@ -203,9 +177,11 @@ const fetchWorldBankData = async (countryCode, indicator) => {
 };
 
 // ── PROMPTS ───────────────────────────────────────────────────────────────────
-
-const getFlashcardPrompt = (exam, topic, count) => {
-  return `You are an expert educator. Generate EXACTLY ${count} high-quality study flashcards for the ${exam} exam on the topic: "${topic}".
+const getFlashcardPrompt = (
+  exam,
+  topic,
+  count
+) => `You are an expert educator. Generate EXACTLY ${count} high-quality study flashcards for the ${exam} exam on the topic: "${topic}".
 Focus on high-yield facts, important definitions, and conceptual clarity for active recall.
 
 Return ONLY a valid JSON array. No markdown, no extra text.
@@ -217,7 +193,6 @@ Format:
     "category": "${topic}"
   }
 ]`;
-};
 
 const getQuizPrompt = (exam, topic, count, contextBlock = "") => {
   const upscGS1Formats = `
@@ -260,13 +235,11 @@ ABSOLUTE RESTRICTIONS: DO NOT invent Articles, Acts, committees, schemes, or fac
 Every single question must be 100% traceable to either a UPSC PYQ (2014–2025) or an NCERT Class 6–12 textbook.
 Topic: "${topic}"
 ${upscGS1Formats}`,
-
     CSAT: `You are a UPSC CSAT (Paper II) question setter. Generate questions STRICTLY in the style of UPSC CSAT PYQs (2014–2025).
 TOPIC: "${topic}"
 Cover: READING COMPREHENSION, LOGICAL REASONING, DECISION MAKING, BASIC NUMERACY, DATA INTERPRETATION, GENERAL MENTAL ABILITY.
 RULES: Every numerical answer uniquely correct. DIFFICULTY: 50% Moderate, 50% Hard. Show full working in explanation.
 STRICT: Only include question types that appear in official UPSC CSAT PYQs. Do not go beyond CSAT scope.`,
-
     "Current Affairs": `You are a UPSC Current Affairs question setter. Use the LIVE CONTEXT below as PRIMARY source.
 Topic: "${topic}"
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -278,64 +251,54 @@ ${
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STRICT: Only generate questions based on verified facts from the live context above or well-established current affairs. Do NOT invent events, data, or facts.
 ${upscGS1Formats}`,
-
     JEE: `You are a JEE Main/Advanced question setter.
 Generate questions on "${topic}" STRICTLY from the official JEE Main/Advanced syllabus as defined by NTA.
 ONLY cover topics explicitly listed in the official JEE syllabus. DO NOT include BSc-level or engineering college topics.
 Use a MIX of: Numerical-based MCQ, Concept application, Common misconception traps, Graph/diagram interpretation.
 RULES: Include actual numerical values. Options differ by small margins. 60% hard, 40% medium. Show key formula in explanation.
 ABSOLUTE RESTRICTION: Every question must be solvable using JEE syllabus knowledge only. No topic outside NTA JEE syllabus.`,
-
     NEET: `You are a NEET UG question setter.
 Generate questions on "${topic}" STRICTLY from NCERT Class 11 and Class 12 Biology, Physics, and Chemistry textbooks only.
 DO NOT include any topic, concept, or terminology beyond what appears in NCERT Class 11–12 textbooks.
 Use a MIX of: Assertion-Reason, Diagram/structure based, Statement true/false, Application-based.
 RULES: Every answer must be directly traceable to a specific NCERT Class 11 or 12 chapter. Correct scientific nomenclature. 50% hard, 50% medium.
 ABSOLUTE RESTRICTION: If a concept is not in NCERT Class 11–12, do NOT include it.`,
-
     CAT: `You are a CAT question setter. Generate CAT-level questions on "${topic}".
 STRICTLY follow the official CAT syllabus as conducted by IIMs.
 Use a MIX of: VARC (Para-jumble, Para-summary, Inference), DILR, QA (Word problems).
 RULES: Options very close. Avoid straightforward computation. Show elimination strategy. 60% hard, 40% medium.
 ABSOLUTE RESTRICTION: Only include question types that appear in official CAT papers. Do not go beyond CAT scope.`,
-
     SSC: `You are an SSC CGL/CHSL question setter.
 Generate questions on "${topic}" STRICTLY within the official SSC CGL/CHSL syllabus as defined by SSC.
 Mix: Reasoning, Quant, GK, English.
 RULES: Options tricky. For Quant show shortcut. 40% hard, 60% medium.
 ABSOLUTE RESTRICTION: Do not include topics outside the official SSC CGL/CHSL syllabus.`,
-
     Banking: `You are an IBPS/SBI PO question setter.
 Generate questions on "${topic}" STRICTLY within the official IBPS/SBI PO syllabus.
 Mix: Reasoning puzzles, Quant (DI, simplification), Banking Awareness, English.
 RULES: Include at least 2 DI questions. Options numerical and close. 50% hard, 50% medium.
 ABSOLUTE RESTRICTION: Only include topics from the official IBPS/SBI PO syllabus. No topics beyond this scope.`,
-
     GATE: `You are a GATE question setter.
 Generate questions on "${topic}" STRICTLY from the official GATE syllabus for the relevant engineering/science discipline.
 Mix: Numerical Answer Type, Concept application, Multi-step technical problems.
 RULES: Include formulas and derivations. Options technically precise. 60% hard, 40% medium.
 ABSOLUTE RESTRICTION: Every question must be within the official GATE syllabus. Do not include advanced research-level topics.`,
-
     "State PCS": `You are a State PCS Preliminary Examination question setter.
 Generate questions: 60% general topics + 40% state-specific topics.
 Topic received: "${topic}" — Extract STATE NAME before " — " and SUBJECT TOPIC after " — ".
 Generate 40% questions specifically about THAT STATE only. NEVER mix up states.
 STYLE: 50% Statement-based, 20% Direct, 15% Match List, 15% Statement I/II.
 ABSOLUTE RESTRICTION: State-specific questions must only reference verified facts about the correct state. Do not confuse states.`,
-
     "CBSE 10th": `You are a CBSE Class 10 Board Examination question setter.
 Generate questions STRICTLY from NCERT Class 10 textbooks only — no other source.
 Mix: 40% MCQ, 25% Short Answer, 20% Case-based/Assertion-Reason, 15% Numerical.
 DIFFICULTY: 60% Easy-Medium, 40% Medium-Hard. Topic: "${topic}"
 ABSOLUTE RESTRICTION: Every question must be directly from NCERT Class 10. Do NOT include Class 11/12 or beyond.`,
-
     "CBSE 12th": `You are a CBSE Class 12 Board Examination question setter.
 Generate questions STRICTLY from NCERT Class 12 textbooks only — no other source.
 Mix: 35% MCQ, 25% Short Answer, 20% Long Answer/Case-based, 20% Numerical/Derivation.
 DIFFICULTY: 30% Easy, 40% Medium, 30% Hard. Topic: "${topic}"
 ABSOLUTE RESTRICTION: Every question must be directly from NCERT Class 12. Do NOT include beyond-syllabus topics.`,
-
     General: `You are an expert question setter. Generate well-structured MCQ questions on "${topic}".
 Mix easy, medium and hard difficulty. Make distractors plausible but clearly wrong on reflection.
 Explanation must be 2-3 sentences with the reasoning behind the correct answer.`,
@@ -424,7 +387,6 @@ Format:
 export { getQuizPrompt };
 
 // ── AI ENGINE ─────────────────────────────────────────────────────────────────
-
 const GROQ_MODELS = [
   { id: "meta-llama/llama-4-maverick-17b-128e-instruct", maxTokens: 3000 },
   { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 3000 },
@@ -517,8 +479,340 @@ const extractJSONArray = (text) => {
   const start = text.indexOf("[");
   const end = text.lastIndexOf("]");
   if (start === -1 || end === -1) throw new Error("JSON not found");
-  const jsonString = text.slice(start, end + 1);
-  return JSON.parse(jsonString);
+  return JSON.parse(text.slice(start, end + 1));
+};
+
+// ── INFIP.PRO IMAGE GENERATION ────────────────────────────────────────────────
+// Models available on free tier:
+//   flux2-klein-9b  — fast, all aspect ratios, image-to-image
+//   img3            — Imagen 3, instant URL response
+//   img4            — Imagen 4, instant URL response
+//   qwen            — anime / illustration style
+
+const INFIP_FREE_MODELS = ["flux2-klein-9b", "img3", "img4"];
+const INFIP_API_BASE = "https://api.infip.pro";
+
+/**
+ * Map width/height to infip.pro aspect string.
+ * Supported values: "square" (1024×1024) | "landscape" (1792×1024) | "portrait" (1024×1792)
+ */
+const aspectFromDimensions = (width, height) => {
+  const w = Number(width) || 1024;
+  const h = Number(height) || 1024;
+  if (w > h * 1.2) return "landscape";
+  if (h > w * 1.2) return "portrait";
+  return "square";
+};
+
+/**
+ * Call infip.pro text-to-image. Tries models in order until one succeeds.
+ * Returns { imageUrl, modelUsed } or throws.
+ */
+const infipGenerate = async (prompt, { width, height } = {}) => {
+  if (!infipApiKey) throw new Error("INFIP_API_KEY not set in .env");
+
+  const aspect = aspectFromDimensions(width, height);
+  const models = [...INFIP_FREE_MODELS];
+  let lastError = null;
+
+  for (const model of models) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      const response = await fetch(`${INFIP_API_BASE}/v1/images/generations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${infipApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          prompt,
+          n: 1,
+          aspect,
+          response_format: "url",
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        lastError = `infip.pro ${model} → HTTP ${
+          response.status
+        }: ${errText.slice(0, 200)}`;
+        console.warn(`⚠️ infip.pro model ${model} failed:`, lastError);
+        continue;
+      }
+
+      const data = await response.json();
+      const imageUrl = data?.data?.[0]?.url;
+
+      if (!imageUrl || typeof imageUrl !== "string") {
+        lastError = `infip.pro ${model} → no URL in response`;
+        console.warn(`⚠️ infip.pro model ${model}: no URL returned`, data);
+        continue;
+      }
+
+      console.log(
+        `✅ infip.pro image generated — model: ${model}, aspect: ${aspect}`
+      );
+      return { imageUrl, modelUsed: model, aspect, promptUsed: prompt };
+    } catch (err) {
+      lastError =
+        err.name === "AbortError"
+          ? `infip.pro ${model} → timeout`
+          : `infip.pro ${model} → ${err.message}`;
+      console.warn(`⚠️ infip.pro model ${model} error:`, lastError);
+    }
+  }
+
+  throw new Error(lastError || "All infip.pro models failed");
+};
+
+/**
+ * Upload a file buffer to Telegraph (free, no auth, instantly public).
+ * Returns a public URL like https://telegra.ph/file/abc123.jpg, or null on failure.
+ */
+// ── PUBLIC IMAGE UPLOAD (for i2i) ────────────────────────────────────────────
+// Try multiple free hosts in order until one succeeds.
+
+const uploadToCatbox = async (buffer, mimetype) => {
+  try {
+    const ext = mimetype.includes("png")
+      ? "png"
+      : mimetype.includes("webp")
+      ? "webp"
+      : "jpg";
+    const form = new FormData();
+    form.append("reqtype", "fileupload");
+    form.append(
+      "fileToUpload",
+      new Blob([buffer], { type: mimetype }),
+      `image.${ext}`
+    );
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const response = await fetch("https://catbox.moe/user/api.php", {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    const url = (await response.text()).trim();
+    return url.startsWith("https://") ? url : null;
+  } catch (err) {
+    console.warn("⚠️ Catbox upload failed:", err.message);
+    return null;
+  }
+};
+
+const uploadToTmpfiles = async (buffer, mimetype) => {
+  try {
+    const ext = mimetype.includes("png")
+      ? "png"
+      : mimetype.includes("webp")
+      ? "webp"
+      : "jpg";
+    const form = new FormData();
+    form.append("file", new Blob([buffer], { type: mimetype }), `image.${ext}`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const response = await fetch("https://tmpfiles.org/api/v1/upload", {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    const data = await response.json();
+    // tmpfiles returns { data: { url: "https://tmpfiles.org/1234/image.png" } }
+    // Convert to direct dl link: tmpfiles.org/dl/...
+    const rawUrl = data?.data?.url;
+    if (!rawUrl) return null;
+    return rawUrl.replace("tmpfiles.org/", "tmpfiles.org/dl/");
+  } catch (err) {
+    console.warn("⚠️ Tmpfiles upload failed:", err.message);
+    return null;
+  }
+};
+
+const uploadToTelegraph = async (buffer, mimetype) => {
+  try {
+    const ext = mimetype.includes("png")
+      ? "png"
+      : mimetype.includes("webp")
+      ? "webp"
+      : "jpg";
+    const form = new FormData();
+    form.append("file", new Blob([buffer], { type: mimetype }), `image.${ext}`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const response = await fetch("https://telegra.ph/upload", {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const src = Array.isArray(data) ? data[0]?.src : data?.src;
+    if (!src) return null;
+    return `https://telegra.ph${src}`;
+  } catch (err) {
+    console.warn("⚠️ Telegraph upload failed:", err.message);
+    return null;
+  }
+};
+
+/**
+ * Try all free image hosts in order, return first working public URL or null.
+ */
+const uploadImageForI2I = async (buffer, mimetype) => {
+  const hosts = [
+    { name: "Catbox", fn: () => uploadToCatbox(buffer, mimetype) },
+    { name: "Tmpfiles", fn: () => uploadToTmpfiles(buffer, mimetype) },
+    { name: "Telegraph", fn: () => uploadToTelegraph(buffer, mimetype) },
+  ];
+  for (const host of hosts) {
+    console.log(`📤 Trying ${host.name}...`);
+    const url = await host.fn();
+    if (url) {
+      console.log(`✅ ${host.name} upload success:`, url);
+      return url;
+    }
+  }
+  console.warn("⚠️ All image hosts failed — falling back to prompt-remix");
+  return null;
+};
+
+/**
+ * Call infip.pro image-to-image edit.
+ * Uploads source image to a free host to get a public URL, then passes it
+ * to infip.pro's `images` field for true image-to-image editing.
+ * Falls back to prompt-remix only if all uploads fail.
+ */
+const infipEdit = async (buffer, mimetype, prompt, { width, height } = {}) => {
+  if (!infipApiKey) throw new Error("INFIP_API_KEY not set in .env");
+
+  const aspect = aspectFromDimensions(width, height);
+
+  // Always build a rich Gemini prompt first
+  console.log("🧠 Building rich prompt with Gemini vision...");
+  const richPrompt = await buildImageEditPrompt(buffer, mimetype, prompt);
+  console.log("📝 Rich prompt:", richPrompt.slice(0, 120) + "...");
+
+  // Strategy 1: base64 data URL directly in images[]
+  const base64DataUrl = `data:${mimetype};base64,${buffer.toString("base64")}`;
+  console.log(
+    `📤 Sending image as base64 to infip.pro i2i (${Math.round(
+      buffer.length / 1024
+    )}KB)...`
+  );
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+    const response = await fetch(`${INFIP_API_BASE}/v1/images/generations`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${infipApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "flux2-klein-9b",
+        prompt: richPrompt,
+        n: 1,
+        aspect,
+        response_format: "url",
+        images: [base64DataUrl],
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      const imageUrl = data?.data?.[0]?.url;
+      if (imageUrl) {
+        console.log(
+          "✅ infip.pro i2i success (base64) — model: flux2-klein-9b"
+        );
+        return {
+          imageUrl,
+          modelUsed: "flux2-klein-9b",
+          aspect,
+          promptUsed: richPrompt,
+          mode: "image_to_image",
+        };
+      }
+    }
+
+    console.warn(
+      `⚠️ infip.pro i2i base64 failed (HTTP ${response.status}) — trying public URL...`
+    );
+
+    // Strategy 2: upload to public host, pass URL
+    const publicUrl = await uploadImageForI2I(buffer, mimetype);
+    if (publicUrl) {
+      const controller2 = new AbortController();
+      const timeoutId2 = setTimeout(() => controller2.abort(), 90000);
+
+      const response2 = await fetch(`${INFIP_API_BASE}/v1/images/generations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${infipApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "flux2-klein-9b",
+          prompt: richPrompt,
+          n: 1,
+          aspect,
+          response_format: "url",
+          images: [publicUrl],
+        }),
+        signal: controller2.signal,
+      });
+
+      clearTimeout(timeoutId2);
+
+      if (response2.ok) {
+        const data2 = await response2.json();
+        const imageUrl2 = data2?.data?.[0]?.url;
+        if (imageUrl2) {
+          console.log(
+            "✅ infip.pro i2i success (public URL) — model: flux2-klein-9b"
+          );
+          return {
+            imageUrl: imageUrl2,
+            modelUsed: "flux2-klein-9b",
+            aspect,
+            promptUsed: richPrompt,
+            mode: "image_to_image",
+          };
+        }
+      }
+      console.warn(
+        `⚠️ infip.pro i2i public URL failed (HTTP ${response2.status})`
+      );
+    }
+  } catch (err) {
+    console.warn("⚠️ infip.pro i2i error:", err.message);
+  }
+
+  // Strategy 3: text-to-image with rich prompt (last resort)
+  console.log("🎨 Falling back to text-to-image with rich prompt...");
+  const result = await infipGenerate(richPrompt, { width, height });
+  return { ...result, promptUsed: richPrompt, mode: "prompt_remix" };
 };
 
 // ── BASIC ROUTES ──────────────────────────────────────────────────────────────
@@ -534,7 +828,7 @@ app.get("/chats/:userId", async (req, res) => {
       .project({ title: 1, updatedAt: 1, exam: 1 })
       .toArray();
     res.json(chats);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to load chats" });
   }
 });
@@ -547,7 +841,7 @@ app.get("/chats/:userId/:chatId", async (req, res) => {
     });
     if (!chat) return res.status(404).json({ error: "Chat not found" });
     res.json(chat);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to load chat" });
   }
 });
@@ -559,7 +853,7 @@ app.delete("/chats/:userId/:chatId", async (req, res) => {
       userId: req.params.userId,
     });
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to delete chat" });
   }
 });
@@ -577,7 +871,7 @@ app.post("/chats/:userId", async (req, res) => {
     };
     const result = await getChats().insertOne(newChat);
     res.json({ chatId: result.insertedId, ...newChat });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to create chat" });
   }
 });
@@ -588,8 +882,6 @@ app.post("/chat", async (req, res) => {
   if (!question) return res.status(400).json({ error: "Question is required" });
   try {
     let finalPrompt = question;
-
-    // OPTIMIZATION: Skip Agent for short greetings to save API quota (50% savings)
     let decision = { action: "direct" };
     const isSimpleMessage =
       question.trim().length < 20 ||
@@ -597,9 +889,7 @@ app.post("/chat", async (req, res) => {
         question.trim()
       );
 
-    if (!isSimpleMessage) {
-      decision = await askAIAgent(question, exam);
-    }
+    if (!isSimpleMessage) decision = await askAIAgent(question, exam);
 
     if (decision.action === "web_search") {
       const searchContext = await fetchLiveSearchContext(decision.query);
@@ -612,7 +902,9 @@ app.post("/chat", async (req, res) => {
       );
       if (wbData) finalPrompt = `${wbData}\n\nQuestion: ${question}`;
     }
+
     const answer = await askAI(finalPrompt, exam, history, false);
+
     if (userId && chatId) {
       await getChats().updateOne(
         { _id: new ObjectId(chatId), userId },
@@ -630,41 +922,37 @@ app.post("/chat", async (req, res) => {
       );
     }
     res.json({ answer });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "AI service failed" });
   }
 });
 
-// Sync User Profile (Saves Name, Exam, and XP to MongoDB)
+// ── USER PROFILE ──────────────────────────────────────────────────────────────
 app.post("/user/sync", async (req, res) => {
   const { userId, userName, exam, xp = 0 } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
-
   try {
     await getUsers().updateOne(
       { userId },
-      {
-        $set: { userName, exam, updatedAt: new Date() },
-        $inc: { xp: xp }, // This allows you to add XP to their total
-      },
+      { $set: { userName, exam, updatedAt: new Date() }, $inc: { xp } },
       { upsert: true }
     );
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to sync user" });
   }
 });
 
-// Get User Profile
 app.get("/user/:userId", async (req, res) => {
   try {
     const user = await getUsers().findOne({ userId: req.params.userId });
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to load user" });
   }
 });
+
 // ── QUIZ ──────────────────────────────────────────────────────────────────────
 app.post("/quiz/generate", async (req, res) => {
   const { topic, exam = "General", count = 10, userId, state } = req.body;
@@ -674,7 +962,7 @@ app.post("/quiz/generate", async (req, res) => {
   const safeCount = Math.min(Number(count) || 10, 20);
   const finalTopic =
     exam === "State PCS" && state ? `${state} — ${topic}` : topic;
-  let contextBlock =
+  const contextBlock =
     exam === "Current Affairs"
       ? await fetchLiveSearchContext(
           `${finalTopic} India government PIB official`
@@ -687,7 +975,7 @@ app.post("/quiz/generate", async (req, res) => {
       content.replace(/```json|```/gi, "").trim()
     );
     res.json({ questions, contextUsed: !!contextBlock });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Quiz failed" });
   }
 });
@@ -707,7 +995,7 @@ app.post("/quiz/result", async (req, res) => {
       createdAt: new Date(),
     });
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to save result" });
   }
 });
@@ -720,42 +1008,34 @@ app.get("/quiz/history/:userId", async (req, res) => {
       .limit(20)
       .toArray();
     res.json(results);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to load history" });
   }
 });
-// ── CURRENT AFFAIRS ROUTE (Uses Serper + AI) ──────────────────────────────────
+
+// ── CURRENT AFFAIRS ───────────────────────────────────────────────────────────
 app.get("/current-affairs/:exam", async (req, res) => {
   const { exam } = req.params;
   const today = new Date().toISOString().split("T")[0];
-
   try {
-    // 1. Use your existing Serper integration to get latest news
-    const searchQuery = `latest current affairs for ${exam} exam India ${today}`;
-    const liveContext = await fetchLiveSearchContext(searchQuery);
+    const liveContext = await fetchLiveSearchContext(
+      `latest current affairs for ${exam} exam India ${today}`
+    );
+    const prompt = `You are an expert news editor for competitive exams.
+Based on these search results:
+${liveContext}
 
-    // 2. Use AI to summarize the news into the format the app expects
-    const prompt = `
-      You are an expert news editor for competitive exams.
-      Based on these search results:
-      ${liveContext}
-
-      Create a summary of the top 5 most important news items for a ${exam} aspirant today (${today}).
-      Return ONLY valid JSON in this format:
-      {
-        "date": "${today}",
-        "summaries": ["News item 1 summary", "News item 2 summary", ...],
-        "quiz": [] 
-      }
-    `;
-
+Create a summary of the top 5 most important news items for a ${exam} aspirant today (${today}).
+Return ONLY valid JSON in this format:
+{
+  "date": "${today}",
+  "summaries": ["News item 1 summary", "News item 2 summary", ...],
+  "quiz": []
+}`;
     const aiResponse = await generateAIContent(prompt);
     const digest = JSON.parse(aiResponse.replace(/```json|```/g, "").trim());
-
     res.json(digest);
-  } catch (err) {
-    console.error("Current Affairs error:", err.message);
-    // Fallback if AI/Serper fails
+  } catch {
     res.json({
       date: today,
       summaries: [
@@ -766,8 +1046,8 @@ app.get("/current-affairs/:exam", async (req, res) => {
     });
   }
 });
-// ── FLASHCARDS (NEW) ─────────────────────────────────────────────────────────
 
+// ── FLASHCARDS ────────────────────────────────────────────────────────────────
 app.get("/flashcards/:userId", async (req, res) => {
   try {
     const cards = await getFlashcards()
@@ -775,7 +1055,7 @@ app.get("/flashcards/:userId", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
     res.json(cards);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to load flashcards" });
   }
 });
@@ -784,20 +1064,16 @@ app.post("/flashcards/generate", async (req, res) => {
   const { topic, exam = "General", count = 10, userId } = req.body;
   if (!topic || !userId)
     return res.status(400).json({ error: "Topic and userId required" });
-
   const safeCount = Math.min(Number(count) || 10, 20);
   const prompt = getFlashcardPrompt(exam, topic, safeCount);
-
   try {
     let content = await generateAIContent(prompt);
     if (!content) throw new Error("AI failed");
-
     content = content
       .replace(/```json/gi, "")
       .replace(/```/g, "")
       .trim();
     const rawCards = extractJSONArray(content);
-
     const cards = rawCards.map((c) => ({
       ...c,
       userId,
@@ -805,10 +1081,7 @@ app.post("/flashcards/generate", async (req, res) => {
       lastReviewed: null,
       createdAt: new Date(),
     }));
-
-    if (cards.length > 0) {
-      await getFlashcards().insertMany(cards);
-    }
+    if (cards.length > 0) await getFlashcards().insertMany(cards);
     res.json({ cards });
   } catch (err) {
     console.error("Flashcard generation error:", err.message);
@@ -822,13 +1095,10 @@ app.post("/flashcards/review", async (req, res) => {
   try {
     await getFlashcards().updateOne(
       { _id: new ObjectId(cardId) },
-      {
-        $set: { lastReviewed: new Date() },
-        $inc: { interval: inc },
-      }
+      { $set: { lastReviewed: new Date() }, $inc: { interval: inc } }
     );
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to update review" });
   }
 });
@@ -864,7 +1134,7 @@ app.post("/planner/generate", async (req, res) => {
       }
     );
     const data = await response.json();
-    let content = data.choices?.[0]?.message?.content?.trim();
+    const content = data.choices?.[0]?.message?.content?.trim();
     const plan = JSON.parse(content.replace(/```json|```/g, "").trim());
     if (userId) {
       const existing = await getPlanners().findOne({ userId, exam });
@@ -885,7 +1155,7 @@ app.post("/planner/generate", async (req, res) => {
       }
     }
     res.json({ plan });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Planner failed" });
   }
 });
@@ -897,7 +1167,7 @@ app.get("/planner/:userId", async (req, res) => {
       .sort({ updatedAt: -1 })
       .toArray();
     res.json(planners);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to load planners" });
   }
 });
@@ -915,7 +1185,7 @@ app.patch("/planner/:plannerId/day/:dayIndex", async (req, res) => {
       }
     );
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed update" });
   }
 });
@@ -927,578 +1197,59 @@ app.delete("/planner/:userId/:plannerId", async (req, res) => {
       userId: req.params.userId,
     });
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Delete failed" });
   }
 });
 
-// ── IMAGE GENERATION (FREE) ───────────────────────────────────────────────────
-const clampImageSize = (value, fallback) => {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(1536, Math.max(256, parsed));
-};
+// ── IMAGE GENERATION (infip.pro) ──────────────────────────────────────────────
 
-const buildDirectPollinationsUrl = ({
-  prompt,
-  width = 1024,
-  height = 1024,
-  seed,
-  model = "flux",
-}) => {
-  const safeWidth = clampImageSize(width, 1024);
-  const safeHeight = clampImageSize(height, 1024);
-  const parsedSeed = Number.parseInt(seed, 10);
-  const safeSeed = Number.isFinite(parsedSeed)
-    ? Math.abs(parsedSeed)
-    : Math.floor(Math.random() * 99999999);
-  const cleanPrompt = String(prompt || "").trim();
-  const cleanModel =
-    typeof model === "string" && model.trim() ? model.trim() : "flux";
-  const encodedPrompt = encodeURIComponent(cleanPrompt);
-  const query = new URLSearchParams({
-    width: String(safeWidth),
-    height: String(safeHeight),
-    nologo: "true",
-    seed: String(safeSeed),
-    model: cleanModel,
-  });
-  return {
-    imageUrl: `https://gen.pollinations.ai/image/${encodedPrompt}?${query.toString()}`,
-    safeSeed,
-    safeWidth,
-    safeHeight,
-    modelUsed: cleanModel,
-    promptUsed: cleanPrompt,
-  };
-};
-
-const normalizeImagePrompt = (value = "") => {
-  const raw = String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!raw) return "";
-
-  let prompt = raw
-    .replace(/^(?:an?\s+)?(?:image|photo|picture|portrait)\s+of\s+/i, "")
-    .replace(/^(?:an?\s+)?(?:actor|actress|celebrity|celeb)\s+/i, "")
-    .trim();
-
-  // Common name normalization improves identity hit-rate.
-  prompt = prompt
-    .replace(/\bshahrukh\b/gi, "Shah Rukh")
-    .replace(/\bsharukh\b/gi, "Shah Rukh")
-    .replace(/\bsrk\b/gi, "Shah Rukh Khan");
-
-  return prompt || raw;
-};
-
-const classifyPromptType = (prompt = "") => {
-  const value = String(prompt || "").toLowerCase();
-  if (!value) return "generic";
-
-  if (
-    /\b(anime|manga|illustration|cartoon|comic|cel[-\s]?shade|waifu)\b/.test(
-      value
-    )
-  ) {
-    return "anime_illustration";
-  }
-  if (
-    /\b(logo|icon|app icon|brand mark|emblem|flat design|minimal)\b/.test(value)
-  ) {
-    return "logo_icon";
-  }
-  if (
-    /\b(poster|flyer|banner|typography|text design|cover art|quote card)\b/.test(
-      value
-    )
-  ) {
-    return "text_poster";
-  }
-  if (
-    /\b(product|packaging|mockup|bottle|perfume|watch|phone|laptop|shoe)\b/.test(
-      value
-    )
-  ) {
-    return "product";
-  }
-  if (
-    /\b(landscape|scenic|mountain|sunrise|sunset|forest|beach|lake|waterfall|cityscape|nature)\b/.test(
-      value
-    )
-  ) {
-    return "landscape_scene";
-  }
-  if (
-    /\b(actor|actress|celebrity|celeb|portrait|headshot|person|face|model)\b/.test(
-      value
-    ) ||
-    /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(prompt)
-  ) {
-    return "portrait_person";
-  }
-  return "generic";
-};
-
-const rewritePromptForQuality = (prompt, routeType) => {
-  const base = normalizeImagePrompt(prompt);
-  const variants = [base];
-
-  if (routeType === "portrait_person") {
-    variants.push(
-      `Photorealistic portrait of ${base}, accurate facial likeness, natural skin texture, subtle cinematic lighting, 85mm lens, ultra detailed`
-    );
-    variants.push(
-      `${base}, realistic face, high-detail professional portrait photo`
-    );
-  } else if (routeType === "logo_icon") {
-    variants.push(
-      `${base}, clean vector logo, minimal flat design, strong contrast, centered composition, no watermark`
-    );
-    variants.push(`${base}, premium app icon, minimal geometry, crisp edges`);
-  } else if (routeType === "text_poster") {
-    variants.push(
-      `${base}, poster design, high contrast composition, typography-focused layout, clear readable text areas`
-    );
-    variants.push(
-      `${base}, modern banner style, balanced negative space, sharp details`
-    );
-  } else if (routeType === "product") {
-    variants.push(
-      `${base}, premium studio product photo, controlled softbox lighting, sharp edges, realistic material details`
-    );
-    variants.push(
-      `${base}, e-commerce product shot on clean background, ultra detailed`
-    );
-  } else if (routeType === "landscape_scene") {
-    variants.push(
-      `${base}, cinematic landscape photography, dramatic natural lighting, depth and atmospheric perspective`
-    );
-    variants.push(`${base}, highly detailed scenic wide shot, natural colors`);
-  } else if (routeType === "anime_illustration") {
-    variants.push(
-      `${base}, high-quality anime illustration, dynamic composition, clean line art, vibrant color grading`
-    );
-    variants.push(`${base}, detailed manga style art, polished shading`);
-  } else {
-    variants.push(
-      `${base}, highly detailed, professional composition, clean lighting`
-    );
-  }
-
-  return [...new Set(variants.map((v) => v.trim()).filter(Boolean))].slice(
-    0,
-    3
-  );
-};
-
-const buildModelPriority = (routeType) => {
-  const hasPollinationsAuth = Boolean(String(pollinationsApiKey || "").trim());
-  if (!hasPollinationsAuth) {
-    // No API key: prioritize free/public models first to avoid auth failures.
-    if (routeType === "logo_icon")
-      return ["flux", "turbo", "seedream", "gptimage"];
-    if (routeType === "text_poster")
-      return ["flux", "turbo", "seedream", "gptimage"];
-    return ["flux", "turbo", "seedream", "gptimage"];
-  }
-  if (routeType === "logo_icon")
-    return ["gptimage", "seedream", "flux", "turbo"];
-  if (routeType === "text_poster")
-    return ["gptimage", "flux", "seedream", "turbo"];
-  return ["gptimage", "flux", "seedream", "turbo"];
-};
-
-const createPollinationsCandidate = ({
-  prompt,
-  model,
-  baseQuery,
-  routeType,
-  promptUsed,
-  extraQuery = "",
-}) => {
-  const encoded = encodeURIComponent(prompt);
-  const modelQuery = model ? `&model=${encodeURIComponent(model)}` : "";
-  return {
-    url: `https://gen.pollinations.ai/image/${encoded}?${baseQuery}${extraQuery}${modelQuery}`,
-    model: model || "default",
-    routeType,
-    promptUsed,
-  };
-};
-
-const buildPollinationsImageCandidates = (prompt, { width, height, seed }) => {
-  const safeWidth = clampImageSize(width, 1024);
-  const safeHeight = clampImageSize(height, 1024);
-  const parsedSeed = Number.parseInt(seed, 10);
-  const safeSeed = Number.isFinite(parsedSeed)
-    ? Math.abs(parsedSeed)
-    : Math.floor(Math.random() * 99999999);
-  const normalizedPrompt = normalizeImagePrompt(prompt);
-  const routeType = classifyPromptType(normalizedPrompt);
-  const promptVariants = rewritePromptForQuality(normalizedPrompt, routeType);
-  const modelPriority = buildModelPriority(routeType);
-  const baseQuery = `width=${safeWidth}&height=${safeHeight}&nologo=true&seed=${safeSeed}`;
-  const candidates = [];
-  const seenUrls = new Set();
-
-  for (const variant of promptVariants) {
-    for (const model of modelPriority) {
-      const candidate = createPollinationsCandidate({
-        prompt: variant,
-        model,
-        baseQuery,
-        routeType,
-        promptUsed: variant,
-      });
-      if (!seenUrls.has(candidate.url)) {
-        seenUrls.add(candidate.url);
-        candidates.push(candidate);
-      }
-    }
-    const defaultCandidate = createPollinationsCandidate({
-      prompt: variant,
-      model: null,
-      baseQuery,
-      routeType,
-      promptUsed: variant,
-    });
-    if (!seenUrls.has(defaultCandidate.url)) {
-      seenUrls.add(defaultCandidate.url);
-      candidates.push(defaultCandidate);
-    }
-  }
-
-  return {
-    safeSeed,
-    safeWidth,
-    safeHeight,
-    routeType,
-    modelPriority,
-    promptVariants,
-    candidates,
-    urls: candidates.map((c) => c.url),
-  };
-};
-
-const buildPollinationsEditCandidates = (
-  prompt,
-  { width, height, seed, referenceImage }
-) => {
-  const base = buildPollinationsImageCandidates(prompt, {
-    width,
-    height,
-    seed,
-  });
-  const encodedImage = encodeURIComponent(referenceImage);
-  const baseQuery = `width=${base.safeWidth}&height=${base.safeHeight}&nologo=true&seed=${base.safeSeed}`;
-  const extraQuery = `&image=${encodedImage}`;
-  const hasPollinationsAuth = Boolean(String(pollinationsApiKey || "").trim());
-  const editModels = hasPollinationsAuth
-    ? [...new Set(["kontext", "gptimage", ...base.modelPriority])]
-    : [...new Set([...base.modelPriority, "kontext", "gptimage"])];
-  const candidates = [];
-  const seenUrls = new Set();
-
-  for (const variant of base.promptVariants) {
-    for (const model of editModels) {
-      const candidate = createPollinationsCandidate({
-        prompt: variant,
-        model,
-        baseQuery,
-        routeType: base.routeType,
-        promptUsed: variant,
-        extraQuery,
-      });
-      if (!seenUrls.has(candidate.url)) {
-        seenUrls.add(candidate.url);
-        candidates.push(candidate);
-      }
-    }
-  }
-
-  return {
-    safeSeed: base.safeSeed,
-    safeWidth: base.safeWidth,
-    safeHeight: base.safeHeight,
-    routeType: base.routeType,
-    modelPriority: editModels,
-    promptVariants: base.promptVariants,
-    candidates,
-    urls: candidates.map((c) => c.url),
-  };
-};
-
-const extractPollinationsErrorMessage = (payload, fallback = "") => {
-  if (!payload) return fallback;
-  if (typeof payload === "string") return payload || fallback;
-  if (typeof payload?.error?.message === "string") return payload.error.message;
-  if (typeof payload?.message === "string") return payload.message;
-  if (typeof payload?.error === "string") return payload.error;
-  return fallback;
-};
-
-const summarizeAttemptRecords = (attempts = []) =>
-  attempts.map((a) => ({
-    attempt: a.attempt,
-    model: a.model,
-    status: a.status,
-    httpStatus: a.httpStatus,
-    latencyMs: a.latencyMs,
-    error: a.error,
-  }));
-
-const fetchPollinationsImage = async (candidateEntries) => {
-  let useAuthHeader = Boolean(String(pollinationsApiKey || "").trim());
-  const buildRequestHeaders = () => {
-    const headers = { Accept: "image/*" };
-    if (useAuthHeader) headers.Authorization = `Bearer ${pollinationsApiKey}`;
-    return headers;
-  };
-
-  const normalizedCandidates = [];
-  const seenUrls = new Set();
-  for (const entry of candidateEntries || []) {
-    const candidate =
-      typeof entry === "string"
-        ? { url: entry, model: "unknown", promptUsed: "", routeType: "generic" }
-        : {
-            url: entry?.url,
-            model: entry?.model || "unknown",
-            promptUsed: entry?.promptUsed || "",
-            routeType: entry?.routeType || "generic",
-          };
-    if (!candidate.url || typeof candidate.url !== "string") continue;
-    const value = candidate.url.trim();
-    if (!value || seenUrls.has(value)) continue;
-    seenUrls.add(value);
-    normalizedCandidates.push({ ...candidate, url: value });
-  }
-
-  let lastFailure = null;
-  let lastAuthFailure = null;
-  const attempts = [];
-
-  for (let index = 0; index < normalizedCandidates.length; index++) {
-    const candidate = normalizedCandidates[index];
-    const startedAt = Date.now();
-    let timeoutId;
-    try {
-      const controller = new AbortController();
-      timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      const response = await fetch(candidate.url, {
-        headers: buildRequestHeaders(),
-        redirect: "follow",
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      const latencyMs = Date.now() - startedAt;
-
-      const contentType = (
-        response.headers.get("content-type") || ""
-      ).toLowerCase();
-
-      if (response.ok && contentType.startsWith("image/")) {
-        const buffer = Buffer.from(await response.arrayBuffer());
-        if (!buffer.length) continue;
-        attempts.push({
-          attempt: index + 1,
-          model: candidate.model,
-          status: "success",
-          httpStatus: response.status,
-          latencyMs,
-          error: null,
-        });
-        return {
-          kind: "image",
-          buffer,
-          contentType,
-          sourceUrl: candidate.url,
-          modelUsed: candidate.model,
-          routeType: candidate.routeType,
-          promptUsed: candidate.promptUsed,
-          attempts,
-          attemptCount: attempts.length,
-          lastModelTried: candidate.model,
-        };
-      }
-
-      const rawText = await response.text();
-      let parsedPayload = null;
-      if (contentType.includes("application/json")) {
-        try {
-          parsedPayload = JSON.parse(rawText);
-        } catch (e) {}
-      }
-      const message = extractPollinationsErrorMessage(
-        parsedPayload,
-        rawText?.slice(0, 300)
-      );
-      attempts.push({
-        attempt: index + 1,
-        model: candidate.model,
-        status: "http_error",
-        httpStatus: response.status,
-        latencyMs,
-        error: message?.slice(0, 180) || "Provider returned non-image response",
-      });
-
-      if (response.status === 401 || response.status === 403) {
-        const authFailure = {
-          kind: "auth_error",
-          status: response.status,
-          message: message || "Invalid or missing Pollinations API key.",
-          sourceUrl: candidate.url,
-          attempts,
-          attemptCount: attempts.length,
-          lastModelTried: candidate.model,
-          routeType: candidate.routeType,
-        };
-        lastAuthFailure = authFailure;
-        // If auth header is enabled and rejected, automatically retry
-        // the same request without Authorization to allow public/free fallback.
-        if (useAuthHeader) {
-          useAuthHeader = false;
-          index--;
-          continue;
-        }
-        // If no key configured, continue trying free/public fallback models.
-        continue;
-      }
-
-      lastFailure = {
-        kind: "provider_error",
-        status: response.status || 502,
-        message: message || "Image provider unavailable. Please try again.",
-        sourceUrl: candidate.url,
-        attempts,
-        attemptCount: attempts.length,
-        lastModelTried: candidate.model,
-        routeType: candidate.routeType,
-      };
-    } catch (e) {
-      clearTimeout(timeoutId);
-      const latencyMs = Date.now() - startedAt;
-      const isTimeout = e.name === "AbortError";
-      attempts.push({
-        attempt: index + 1,
-        model: candidate.model,
-        status: isTimeout ? "timeout" : "network_error",
-        httpStatus: null,
-        latencyMs,
-        error: isTimeout
-          ? "Image generation timed out. Try a simpler prompt."
-          : "Image provider unavailable. Please try again.",
-      });
-      lastFailure = {
-        kind: "provider_error",
-        status: 502,
-        message: isTimeout
-          ? "Image generation timed out. Try a simpler prompt."
-          : "Image provider unavailable. Please try again.",
-        sourceUrl: candidate.url,
-        attempts,
-        attemptCount: attempts.length,
-        lastModelTried: candidate.model,
-        routeType: candidate.routeType,
-      };
-    }
-  }
-
-  if (lastFailure) return lastFailure;
-  if (lastAuthFailure) return lastAuthFailure;
-  return {
-    kind: "provider_error",
-    status: 502,
-    message: "Image provider unavailable. Please try again.",
-    attempts,
-    attemptCount: attempts.length,
-    lastModelTried: attempts.length
-      ? attempts[attempts.length - 1].model
-      : null,
-    routeType: "generic",
-  };
-};
-
-app.get("/image/proxy", async (req, res) => {
-  const prompt =
-    typeof req.query.prompt === "string" ? req.query.prompt.trim() : "";
-  if (!prompt) return res.status(400).json({ error: "Prompt required" });
-  const { imageUrl, safeSeed, safeWidth, safeHeight, modelUsed } =
-    buildDirectPollinationsUrl({
-      prompt,
-      width: req.query.width,
-      height: req.query.height,
-      seed: req.query.seed,
-      model: req.query.model,
-    });
-  try {
-    const response = await fetch(imageUrl, {
-      headers: { Accept: "image/*" },
-      redirect: "follow",
-    });
-    const contentType = (
-      response.headers.get("content-type") || ""
-    ).toLowerCase();
-    if (!response.ok || !contentType.startsWith("image/")) {
-      return res.status(response.status || 502).json({
-        error: "Image provider unavailable. Please try again.",
-      });
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    res.set("Content-Type", contentType);
-    res.set("Cache-Control", "no-store");
-    res.set("X-Pollinations-Seed", String(safeSeed));
-    res.set("X-Pollinations-Size", `${safeWidth}x${safeHeight}`);
-    res.set("X-Pollinations-Model", modelUsed);
-    res.send(buffer);
-  } catch (e) {
-    return res.status(502).json({
-      error: "Image provider unavailable. Please try again.",
-    });
-  }
-});
-
+/**
+ * POST /image/generate
+ * Body: { prompt, width?, height? }
+ * Response: { imageUrl, modelUsed, routeType, promptUsed, attemptCount }
+ *
+ * Called by App.jsx → resolvePollinationsUrl() — response shape kept identical.
+ */
 app.post("/image/generate", async (req, res) => {
   const prompt =
     typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
-  // Use robust candidate generation with fallbacks (Flux -> Turbo -> etc)
-  const candidates = buildPollinationsImageCandidates(prompt, {
-    width: req.body?.width,
-    height: req.body?.height,
-    seed: req.body?.seed,
-  });
+  try {
+    console.log("🧠 Enhancing text-to-image prompt with Gemini...");
+    const richPrompt = await buildTextToImagePrompt(prompt);
+    console.log("📝 Rich prompt:", richPrompt.slice(0, 120) + "...");
 
-  // Try to fetch image with retries/fallbacks on the backend
-  const result = await fetchPollinationsImage(candidates.candidates);
-
-  if (result.kind === "image") {
-    const base64Url = `data:${
-      result.contentType
-    };base64,${result.buffer.toString("base64")}`;
-    return res.json({
-      imageUrl: base64Url,
-      seed: candidates.safeSeed,
-      width: candidates.safeWidth,
-      height: candidates.safeHeight,
-      modelUsed: result.modelUsed,
-      routeType: result.routeType,
-      promptUsed: result.promptUsed,
-      attemptCount: result.attemptCount,
+    const result = await infipGenerate(richPrompt, {
+      width: req.body?.width,
+      height: req.body?.height,
     });
-  }
 
-  // If all attempts failed
-  return res.status(502).json({
-    error: result.message || "Image generation failed",
-    attemptSummary: summarizeAttemptRecords(result.attempts),
-  });
+    return res.json({
+      imageUrl: result.imageUrl,
+      modelUsed: result.modelUsed,
+      routeType: result.aspect,
+      promptUsed: richPrompt,
+      attemptCount: 1,
+    });
+  } catch (err) {
+    console.error("❌ /image/generate error:", err.message);
+    return res
+      .status(502)
+      .json({ error: err.message || "Image generation failed" });
+  }
 });
 
+/**
+ * POST /image/edit
+ * Multipart: image file + body { prompt, width?, height? }
+ *
+ * Strategy:
+ *  1. Upload image to free host → try infip.pro true i2i (needs public URL)
+ *  2. If i2i blocked (free tier) → AI vision analyses source image →
+ *     builds rich descriptive prompt → text-to-image (preserves appearance)
+ */
 app.post("/image/edit", upload.single("image"), async (req, res) => {
   try {
     if (!req.file)
@@ -1513,130 +1264,51 @@ app.post("/image/edit", upload.single("image"), async (req, res) => {
       typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
     if (!prompt) return res.status(400).json({ error: "Edit prompt required" });
 
-    const referenceDataUrl = `data:${
-      req.file.mimetype
-    };base64,${req.file.buffer.toString("base64")}`;
-
-    // Direct reference-image editing can fail on long data URLs.
-    // Try it only for small payloads, then fallback to AI-guided prompt remix.
-    if (referenceDataUrl.length <= 6500) {
-      const direct = buildPollinationsEditCandidates(prompt, {
-        width: req.body?.width,
-        height: req.body?.height,
-        seed: req.body?.seed,
-        referenceImage: referenceDataUrl,
-      });
-      const directImage = await fetchPollinationsImage(direct.candidates);
-      if (directImage.kind === "image") {
-        return res.json({
-          imageUrl: `data:${
-            directImage.contentType
-          };base64,${directImage.buffer.toString("base64")}`,
-          sourceUrl: directImage.sourceUrl,
-          seed: direct.safeSeed,
-          width: direct.safeWidth,
-          height: direct.safeHeight,
-          mode: "direct_edit",
-          promptUsed: directImage.promptUsed || prompt,
-          modelUsed: directImage.modelUsed || null,
-          routeType: direct.routeType || directImage.routeType || "generic",
-          attemptCount: directImage.attemptCount || 1,
-        });
-      }
-      if (directImage.kind === "auth_error") {
-        return res.status(401).json({
-          error: directImage.message,
-          hint: "Set POLLINATIONS_API_KEY in backend/.env and restart backend.",
-          routeType: direct.routeType || directImage.routeType || "generic",
-          attemptCount: directImage.attemptCount || 0,
-          lastModelTried: directImage.lastModelTried || null,
-          attemptSummary: summarizeAttemptRecords(directImage.attempts),
-        });
-      }
-    }
-
-    const remixPrompt = await buildImageEditPrompt(
-      req.file.buffer,
-      req.file.mimetype,
-      prompt
-    );
-    const remix = buildPollinationsImageCandidates(remixPrompt, {
+    const result = await infipEdit(req.file.buffer, req.file.mimetype, prompt, {
       width: req.body?.width,
       height: req.body?.height,
-      seed: req.body?.seed,
     });
-    const remixImage = await fetchPollinationsImage(remix.candidates);
 
-    if (remixImage.kind === "image") {
-      return res.json({
-        imageUrl: `data:${
-          remixImage.contentType
-        };base64,${remixImage.buffer.toString("base64")}`,
-        sourceUrl: remixImage.sourceUrl,
-        seed: remix.safeSeed,
-        width: remix.safeWidth,
-        height: remix.safeHeight,
-        mode: "prompt_remix",
-        promptUsed: remixImage.promptUsed || remixPrompt,
-        modelUsed: remixImage.modelUsed || null,
-        routeType: remix.routeType || remixImage.routeType || "generic",
-        attemptCount: remixImage.attemptCount || 1,
-      });
-    }
-
-    if (remixImage.kind === "auth_error") {
-      return res.status(401).json({
-        error: remixImage.message,
-        hint: "Set POLLINATIONS_API_KEY in backend/.env and restart backend.",
-        routeType: remix.routeType || remixImage.routeType || "generic",
-        attemptCount: remixImage.attemptCount || 0,
-        lastModelTried: remixImage.lastModelTried || null,
-        attemptSummary: summarizeAttemptRecords(remixImage.attempts),
-      });
-    }
-
-    return res.status(502).json({
-      error: remixImage.message || "Could not edit image right now. Try again.",
-      mode: "failed",
-      routeType: remix.routeType || remixImage.routeType || "generic",
-      attemptCount: remixImage.attemptCount || 0,
-      lastModelTried: remixImage.lastModelTried || null,
-      attemptSummary: summarizeAttemptRecords(remixImage.attempts),
+    return res.json({
+      imageUrl: result.imageUrl,
+      modelUsed: result.modelUsed,
+      routeType: result.aspect,
+      promptUsed: result.promptUsed,
+      attemptCount: 1,
+      mode: result.mode,
     });
   } catch (err) {
-    return res.status(500).json({ error: "Image edit failed" });
+    console.error("❌ /image/edit error:", err.message);
+    return res.status(502).json({ error: err.message || "Image edit failed" });
   }
 });
 
-// ── IMAGE / PDF ROUTE ─────────────────────────────────────────────────────────
+// ── IMAGE / PDF ANALYSIS ROUTE ────────────────────────────────────────────────
 app.post("/image", upload.single("image"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "File required" });
 
-    // 1. Try Local PDF Text Extraction (Fast & Free)
     if (req.file.mimetype === "application/pdf") {
       try {
         const { text } = await extractText(req.file.buffer);
-        // If we extracted meaningful text, use the text chat (saves AI tokens)
         if (text && text.trim().length > 50) {
           const answer = await askAI(text, req.body.exam);
           return res.json({ answer });
         }
-      } catch (e) {
+      } catch {
         console.log(
           "⚠️ Local PDF extraction failed, switching to Vision AI..."
         );
       }
     }
 
-    // 2. Fallback: Send Image OR Scanned PDF to Gemini Vision
     const answer = await askAIWithImage(
       req.file.buffer,
       req.file.mimetype,
       req.body.exam
     );
     res.json({ answer });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Image failed" });
   }
 });
@@ -1654,7 +1326,7 @@ app.post("/speak", async (req, res) => {
     const buffer = Buffer.from(await response.arrayBuffer());
     res.set("Content-Type", "audio/wav");
     res.send(buffer);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Voice generation failed" });
   }
 });
@@ -1662,12 +1334,12 @@ app.post("/speak", async (req, res) => {
 app.post("/transcribe", upload.single("audio"), async (req, res) => {
   try {
     const transcription = await groq.audio.transcriptions.create({
-      file: new File([req.file.buffer], `audio.webm`, { type: "audio/webm" }),
+      file: new File([req.file.buffer], "audio.webm", { type: "audio/webm" }),
       model: "whisper-large-v3-turbo",
       language: "en",
     });
     res.json({ text: transcription.text });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Transcription failed" });
   }
 });
@@ -1698,26 +1370,26 @@ app.post("/chart/generate", async (req, res) => {
         data.choices[0].message.content.replace(/```json|```/g, "").trim()
       )
     );
-  } catch (err) {
+  } catch {
     res.status(500).json({ type: "text", answer: "⚠️ Chart failed" });
   }
 });
-// ── DATA DELETION ROUTE (Required for Play Store Compliance) ─────────────────
+
+// ── DATA DELETION (Play Store compliance) ─────────────────────────────────────
 app.delete("/user/:userId/delete-data", async (req, res) => {
   const { userId } = req.params;
   try {
-    // Delete all user related data across collections
     await getUsers().deleteOne({ userId });
     await getChats().deleteMany({ userId });
     await getQuizResults().deleteMany({ userId });
     await getPlanners().deleteMany({ userId });
     await getFlashcards().deleteMany({ userId });
-
     res.json({ success: true, message: "All user data deleted successfully." });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to delete user data" });
   }
 });
+
 // ── ERROR HANDLERS ────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));
 app.use((err, req, res, next) =>
