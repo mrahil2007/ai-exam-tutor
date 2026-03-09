@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 
 // ── Screens ───────────────────────────────────────────────────────────────────
-import SplashScreen from "./screens/SplashScreen";
+import SplashScreen from "./screens/Splashscreen";
 import LandingPage from "./screens/LandingPage";
 import ExamSelectScreen from "./screens/ExamSelectScreen";
 import AuthGateScreen from "./screens/AuthGateScreen";

@@ -298,7 +298,7 @@ const extractJSONArray = (text) => {
 };
 
 // ── Quiz prompt (moved from server.js; kept inline for single-file simplicity) ─
-import { getQuizPrompt } from "./quizPrompts.js";
+import { getQuizPrompt } from "./Quizprompts.js";
 
 const getFlashcardPrompt = (exam, topic, count) =>
   `You are an expert educator. Generate EXACTLY ${count} high-quality study flashcards for the ${exam} exam on the topic: "${topic}".
