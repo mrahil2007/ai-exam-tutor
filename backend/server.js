@@ -28,7 +28,7 @@ import rateLimit from "express-rate-limit";
 // ── Separated modules ─────────────────────────────────────────────────────────
 import { initFirebase, runJobFetcher, startJobCron } from "./JobFetcher.js";
 import createJobRouter from "./JobRouter.js";
-import createResumeRouter from "./resumeBuilder.js";
+import createResumeRouter from "./ResumeBuilder.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 

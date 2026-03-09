@@ -2,13 +2,13 @@ import { useState, useEffect } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 
 // ── Screens ───────────────────────────────────────────────────────────────────
-import SplashScreen from "./screens/Splashscreen";
+import SplashScreen from "./screens/SplashScreen";
 import LandingPage from "./screens/LandingPage";
 import ExamSelectScreen from "./screens/ExamSelectScreen";
 import AuthGateScreen from "./screens/AuthGateScreen";
 import AskAIScreen from "./screens/AskAIScreen";
 import MockTestScreen from "./screens/MockTestScreen";
-import ResumeScreen from "./screens/ResumeScreen";
+import ResumeScreen from "./screens/Resumescreen";
 import JobsScreen from "./screens/JobsScreen";
 
 // ── Components ────────────────────────────────────────────────────────────────
