@@ -17,9 +17,10 @@ export function initFirebase() {
   try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-      });
+      if (!admin.apps.length)
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount),
+        });
       fcmEnabled = true;
       console.log("✅ Firebase Admin initialized — FCM enabled");
     } else {
