@@ -16,8 +16,8 @@ export default function JobsScreen({ exam, API_URL, onAskAI }) {
       const params = new URLSearchParams({
         page: pg,
         limit: 20,
-        ...(f === "new" ? { isNew: "true" } : {}),
         ...(f === "govt" ? { category: "government" } : {}),
+        ...(f === "pvt" ? { category: "private" } : {}),
       });
       if (exam && exam !== "General") params.set("exam", exam);
 
@@ -53,8 +53,6 @@ Please provide:
 6. 🎯 **Selection Process** — all stages (Prelims/Mains/Interview/Physical)`;
     onAskAI(prompt);
   };
-
-  const newCount = jobs.filter((j) => j.isNew).length;
 
   return (
     <div
@@ -111,7 +109,7 @@ Please provide:
           {[
             ["all", "All Jobs"],
             ["govt", "Govt"],
-            ["new", `New${newCount > 0 ? ` (${newCount})` : ""}`],
+            ["pvt", "Pvt"],
           ].map(([f, label]) => (
             <button
               key={f}
