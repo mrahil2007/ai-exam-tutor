@@ -26,8 +26,8 @@ import { MongoClient, ObjectId } from "mongodb";
 import rateLimit from "express-rate-limit";
 
 // ── Separated modules ─────────────────────────────────────────────────────────
-import { initFirebase, runJobFetcher, startJobCron } from "./jobFetcher.js";
-import createJobRouter from "./jobRouter.js";
+import { initFirebase, runJobFetcher, startJobCron } from "./JobFetcher.js";
+import createJobRouter from "./JobRouter.js";
 import createResumeRouter from "./resumeBuilder.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
