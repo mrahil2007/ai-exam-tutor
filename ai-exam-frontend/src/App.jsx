@@ -24,15 +24,15 @@ import { firebaseAuth } from "./firebase";
 import DeleteAccount from "./pages/DeleteAccount";
 
 // ── User ID (guest) ───────────────────────────────────────────────────────────
-const getUserId = () => {
-  let id = localStorage.getItem("examai_userId");
+const getAnonId = () => {
+  let id = localStorage.getItem("examai_anon_id");
   if (!id) {
-    id = "user_" + Math.random().toString(36).slice(2, 11);
-    localStorage.setItem("examai_userId", id);
+    id = "anon_" + crypto.randomUUID(); // more unique than Math.random
+    localStorage.setItem("examai_anon_id", id);
   }
   return id;
 };
-const GUEST_USER_ID = getUserId();
+const GUEST_USER_ID = getAnonId();
 
 // ── App states ────────────────────────────────────────────────────────────────
 // splash → landing → exam-select → main
@@ -321,7 +321,8 @@ export default function App() {
             exam={exam}
             onChangeExam={handleChangeExam}
             API_URL={API_URL}
-            userId={userId}
+            userId={authUser?.uid || null} // 👈 real user ID or null
+            anonId={GUEST_USER_ID}
             initialPrompt={pendingAiPrompt}
             onPromptUsed={handlePromptUsed}
           />

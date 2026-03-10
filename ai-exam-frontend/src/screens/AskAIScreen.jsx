@@ -291,6 +291,7 @@ export default function AskAIScreen({
   onChangeExam,
   API_URL,
   userId,
+  anonId,
   initialPrompt,
   onPromptUsed,
 }) {
@@ -466,6 +467,7 @@ export default function AskAIScreen({
           exam,
           history: hist,
           userId,
+          anonId,
           chatId: cid,
         }),
       });

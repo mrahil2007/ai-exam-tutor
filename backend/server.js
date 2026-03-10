@@ -161,6 +161,7 @@ const getFlashcards = () => db.collection("flashcards");
 const getJobs = () => db.collection("jobs");
 const getUsers = () => db.collection("users");
 const getResumes = () => db.collection("resumes");
+const getMemories = () => db.collection("memories"); // 👈 NEW
 
 app.use("/jobs", createJobRouter(getJobs));
 app.use("/resume", createResumeRouter(getResumes));
@@ -169,6 +170,104 @@ connectDB().then(() => {
   runJobFetcher(getJobs);
   startJobCron(getJobs);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MEMORY FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const loadMemory = async (userId) => {
+  if (!userId) return [];
+  try {
+    const doc = await getMemories().findOne({ userId });
+    return doc?.facts || [];
+  } catch (err) {
+    console.warn("⚠️ Memory load failed:", err.message);
+    return [];
+  }
+};
+
+const saveMemory = async (userId, conversation, exam) => {
+  if (!userId || !conversation?.length) return;
+  try {
+    const existing = await loadMemory(userId);
+
+    const extractPrompt = `
+You are a memory extraction system for an exam prep app.
+Analyze this conversation and extract key facts about the student.
+
+EXISTING MEMORY (already known):
+${existing.length ? existing.map((f) => `- ${f}`).join("\n") : "None yet"}
+
+NEW CONVERSATION:
+${conversation.map((m) => `${m.role}: ${m.content}`).join("\n")}
+
+Extract and return a JSON array of short fact strings. Include:
+- Their name (if mentioned)
+- Exam they are preparing for
+- Weak topics or subjects
+- Strong topics or subjects
+- Preferred language (Hindi/English/Hinglish)
+- Study goals or targets
+- Any personal context (job, background, etc.)
+
+Rules:
+- Merge with existing memory, don't duplicate facts
+- Update outdated facts (e.g. new exam goal replaces old)
+- Max 10 facts total, each fact max 15 words
+- Return ONLY a valid JSON array of strings, nothing else
+- Example: ["Preparing for UPSC 2026", "Weak in Economy", "Prefers Hindi"]
+`;
+
+    const raw = await askAI(extractPrompt, "General", [], true);
+    const cleaned = raw.replace(/```json|```/g, "").trim();
+    const facts = JSON.parse(cleaned);
+
+    if (Array.isArray(facts) && facts.length) {
+      await getMemories().updateOne(
+        { userId },
+        {
+          $set: {
+            facts,
+            exam,
+            updatedAt: new Date(),
+            isAnon: userId.startsWith("anon_"),
+          },
+        },
+        { upsert: true }
+      );
+      console.log(`✅ Memory saved for ${userId}: ${facts.length} facts`);
+    }
+  } catch (err) {
+    console.warn("⚠️ Memory save failed:", err.message);
+  }
+};
+
+const mergeGuestMemory = async (anonId, realUserId) => {
+  if (!anonId || !realUserId) return;
+  try {
+    const guestDoc = await getMemories().findOne({ userId: anonId });
+    if (!guestDoc?.facts?.length) return;
+
+    const realDoc = await getMemories().findOne({ userId: realUserId });
+    const existingFacts = realDoc?.facts || [];
+
+    const merged = [
+      ...existingFacts,
+      ...guestDoc.facts.filter((f) => !existingFacts.includes(f)),
+    ].slice(0, 10);
+
+    await getMemories().updateOne(
+      { userId: realUserId },
+      { $set: { facts: merged, updatedAt: new Date(), isAnon: false } },
+      { upsert: true }
+    );
+
+    await getMemories().deleteOne({ userId: anonId });
+    console.log(`✅ Guest memory merged: ${anonId} → ${realUserId}`);
+  } catch (err) {
+    console.warn("⚠️ Memory merge failed:", err.message);
+  }
+};
 
 // ── Mobile config ─────────────────────────────────────────────────────────────
 app.get("/mobile/config", (req, res) => {
@@ -662,17 +761,28 @@ app.post("/chats/:userId", async (req, res) => {
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
-  const { question, exam, history = [], userId, chatId } = req.body;
+  const { question, exam, history = [], userId, chatId, anonId } = req.body;
+
   if (!question) return res.status(400).json({ error: "Question is required" });
+
   try {
+    // 1. Resolve identity — real user or guest
+    const resolvedUserId = userId || anonId || null;
+
+    // 2. Load memory for this user
+    const memory = await loadMemory(resolvedUserId);
+
     let finalPrompt = question;
     let decision = { action: "direct" };
+
     const isSimple =
       question.trim().length < 20 ||
       /^(hi|hello|hey|thanks|thank you|ok|okay|help|start)$/i.test(
         question.trim()
       );
+
     if (!isSimple) decision = await askAIAgent(question, exam);
+
     if (decision.action === "web_search") {
       const ctx = await fetchLiveSearchContext(decision.query);
       if (ctx) finalPrompt = `${ctx}\n\nQuestion: ${question}`;
@@ -683,7 +793,11 @@ app.post("/chat", async (req, res) => {
       );
       if (wb) finalPrompt = `${wb}\n\nQuestion: ${question}`;
     }
-    const answer = await askAI(finalPrompt, exam, history, false);
+
+    // 3. Pass memory into askAI
+    const answer = await askAI(finalPrompt, exam, history, false, memory);
+
+    // 4. Save chat to DB (logged-in users only)
     if (userId && chatId) {
       await getChats().updateOne(
         { _id: new ObjectId(chatId), userId },
@@ -700,8 +814,22 @@ app.post("/chat", async (req, res) => {
         }
       );
     }
+
+    // 5. Save memory in background — fire & forget, doesn't slow response
+    if (resolvedUserId) {
+      const updatedHistory = [
+        ...history,
+        { role: "user", content: question },
+        { role: "assistant", content: answer },
+      ];
+      saveMemory(resolvedUserId, updatedHistory, exam).catch((err) =>
+        console.warn("⚠️ Memory save failed:", err.message)
+      );
+    }
+
     res.json({ answer });
-  } catch {
+  } catch (err) {
+    console.error("❌ Chat error:", err.message);
     res.status(500).json({ error: "AI service failed" });
   }
 });
@@ -746,6 +874,20 @@ app.post("/user/fcm-token", async (req, res) => {
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "Failed to save FCM token" });
+  }
+});
+
+// ── Merge guest memory on login/signup ────────────────────────────────────────
+// Call this from your auth flow when a guest signs up or logs in
+app.post("/user/merge-memory", async (req, res) => {
+  const { anonId, userId } = req.body;
+  if (!anonId || !userId)
+    return res.status(400).json({ error: "anonId and userId required" });
+  try {
+    await mergeGuestMemory(anonId, userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Memory merge failed" });
   }
 });
 
@@ -1154,6 +1296,7 @@ app.delete("/user/:userId/delete-data", async (req, res) => {
       getPlanners().deleteMany({ userId }),
       getFlashcards().deleteMany({ userId }),
       getResumes().deleteMany({ userId }),
+      getMemories().deleteMany({ userId }), // 👈 also delete memories
     ]);
     res.json({ success: true, message: "All user data deleted successfully." });
   } catch {

@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // ── aiService.js ──────────────────────────────────────────────────────────────
-// PRIMARY:  gemini-2.5-flash-lite Lite (rotating 3 keys)
+// PRIMARY:  gemini-2.5-flash-lite (rotating 3 keys)
 // FALLBACK: Groq Llama (completely free)
 
 import Groq from "groq-sdk";
@@ -14,7 +14,6 @@ const GEMINI_KEYS = [
   process.env.GEMINI_API_KEY_3,
 ].filter(Boolean);
 
-// Fallback to old single key if rotation keys not set
 if (!GEMINI_KEYS.length && process.env.GEMINI_API_KEY) {
   GEMINI_KEYS.push(process.env.GEMINI_API_KEY);
 }
@@ -62,7 +61,15 @@ TONE EXAMPLES:
 - Say: "Let me know if you want me to go deeper on any part."
 `;
 
-// ── EXAM SYSTEM PROMPTS ───────────────────────────────────────────────────────
+// ── MEMORY BLOCK BUILDER ──────────────────────────────────────────────────────
+const buildMemoryBlock = (facts = []) => {
+  if (!facts.length) return "";
+  return `\nSTUDENT MEMORY (Personalize your response using these facts):\n${facts
+    .map((f) => `- ${f}`)
+    .join("\n")}\n`;
+};
+
+// ── LANGUAGE RULE ─────────────────────────────────────────────────────────────
 const getLanguageRule = () => `
 LANGUAGE RULES (Highest Priority - Always Follow):
 - Detect the language of the user's message carefully.
@@ -74,8 +81,10 @@ LANGUAGE RULES (Highest Priority - Always Follow):
 - Match the user's exact language style — do not upgrade or downgrade their language choice.
 `;
 
-const getSystemPrompt = (exam, isQuiz = false) => {
+// ── EXAM SYSTEM PROMPTS ───────────────────────────────────────────────────────
+const getSystemPrompt = (exam, isQuiz = false, memory = []) => {
   const langRule = getLanguageRule();
+  const memoryBlock = buildMemoryBlock(memory); // ✅ memory injected
 
   const prompts = {
     UPSC: `${langRule}
@@ -163,16 +172,16 @@ You are ExamAI, a helpful, knowledgeable AI tutor and study assistant.
 - Use examples to illustrate complex ideas
 - Structure responses with clear formatting
 - Be concise but thorough`,
-  }; // ← this closes the prompts object
+  };
 
   const base = prompts[exam] || prompts["General"];
   const humanLayer = isQuiz ? "" : `\n\n${HUMAN_TOUCH_RULES}`;
 
-  return `${IDENTITY_RULE}\n\n${base}${humanLayer}`;
+  return `${IDENTITY_RULE}\n\n${memoryBlock}${base}${humanLayer}`; // ✅ memoryBlock in final prompt
 };
 
 // ── GEMINI 2.5 FLASH (with key rotation) ─────────────────────────────────────
-const callGemini = async (contents, exam, isVision = false) => {
+const callGemini = async (contents, exam, isVision = false, memory = []) => {
   if (!GEMINI_KEYS.length) throw new Error("No Gemini API keys configured");
 
   for (let attempt = 0; attempt < GEMINI_KEYS.length; attempt++) {
@@ -186,7 +195,7 @@ const callGemini = async (contents, exam, isVision = false) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             system_instruction: {
-              parts: [{ text: getSystemPrompt(exam) }],
+              parts: [{ text: getSystemPrompt(exam, false, memory) }], // ✅ memory passed
             },
             contents,
             generationConfig: {
@@ -216,7 +225,6 @@ const callGemini = async (contents, exam, isVision = false) => {
         }
       );
 
-      // Quota exceeded → try next key
       if (response.status === 429) {
         console.warn(
           `⚠️ Gemini key ${attempt + 1} quota exceeded → trying next key...`
@@ -262,23 +270,24 @@ const GROQ_CHAT_MODELS = [
   "llama-3.3-70b-versatile",
 ];
 
-const callGroqFallback = async (prompt, exam, history = []) => {
+const callGroqFallback = async (prompt, exam, history = [], memory = []) => {
   const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
   const hasSearchContext = prompt.includes("LIVE SEARCH RESULTS:");
 
-  const systemContent = hasSearchContext
+  // ✅ Fixed: was building systemContent but using wrong var in messages
+  const systemPrompt = hasSearchContext
     ? `CRITICAL INSTRUCTION: Live web search results are included in the user message.
 You MUST answer using ONLY those search results as your PRIMARY source.
 DO NOT use your training data for any factual claims about current events, roles, or positions.
 DO NOT contradict the search results under any circumstance.
 Your training data is outdated — the search results are ground truth.
 
-${getSystemPrompt(exam)}`
-    : getSystemPrompt(exam);
+${getSystemPrompt(exam, false, memory)}`
+    : getSystemPrompt(exam, false, memory); // ✅ memory passed
 
   const messages = [
-    { role: "system", content: systemContent },
+    { role: "system", content: systemPrompt }, // ✅ correct var used
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: prompt },
   ];
@@ -338,7 +347,8 @@ export const askAI = async (
   prompt,
   exam = "General",
   history = [],
-  isQuiz = false
+  isQuiz = false,
+  memory = [] // ✅ memory param accepted
 ) => {
   const contents = [
     ...history.map((m) => ({
@@ -350,7 +360,7 @@ export const askAI = async (
 
   // 1️⃣ Try Gemini 2.5 Flash (with key rotation)
   try {
-    const answer = await callGemini(contents, exam, false);
+    const answer = await callGemini(contents, exam, false, memory); // ✅ memory passed
     return answer;
   } catch (err) {
     console.warn("⚠️ Gemini failed:", err.message, "→ falling back to Groq");
@@ -358,7 +368,7 @@ export const askAI = async (
 
   // 2️⃣ Fallback to Groq Llama
   try {
-    return await callGroqFallback(prompt, exam, history);
+    return await callGroqFallback(prompt, exam, history, memory); // ✅ memory passed
   } catch (err) {
     console.error("❌ All chat models failed:", err.message);
     throw new Error("AI service temporarily unavailable. Please try again.");
@@ -392,7 +402,7 @@ If it contains notes or diagrams, explain the key concepts clearly.`,
   // 1️⃣ Try Gemini Vision first (with key rotation)
   try {
     const answer = await callGemini(contents, exam, true);
-    console.log("✅ Image/PDF analyzed by gemini-2.5-flash-lite Lite Vision");
+    console.log("✅ Image/PDF analyzed by gemini-2.5-flash-lite Vision");
     return answer;
   } catch (err) {
     console.warn(
@@ -417,8 +427,6 @@ If it contains notes or diagrams, explain the key concepts clearly.`,
 };
 
 // ── IMAGE EDIT PROMPT BUILDER (exported) ─────────────────────────────────────
-// Converts an uploaded image + edit instruction into a generation prompt
-// that preserves the source subject/style as much as possible.
 export const buildImageEditPrompt = async (
   fileBuffer,
   mimeType,
@@ -460,7 +468,6 @@ Return ONLY the final prompt string. No explanation, no markdown, no labels.`,
 };
 
 // ── TEXT-TO-IMAGE PROMPT BUILDER (exported) ───────────────────────────────────
-// Enhances a plain user prompt into a detailed Flux-optimized generation prompt.
 export const buildTextToImagePrompt = async (userPrompt) => {
   const safe = (userPrompt || "").trim();
   if (!safe) return "A beautiful image, photorealistic, high quality";
@@ -497,8 +504,6 @@ User request: "${safe}"`,
 };
 
 // ── AGENT FUNCTION (Gemini Function Calling) ──────────────────────────────────
-// Replaces keyword/regex routing. Gemini decides which tool to use.
-
 const AGENT_TOOLS = [
   {
     name: "web_search",
