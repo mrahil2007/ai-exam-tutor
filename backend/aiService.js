@@ -163,12 +163,9 @@ You are ExamAI, a helpful, knowledgeable AI tutor and study assistant.
 - Use examples to illustrate complex ideas
 - Structure responses with clear formatting
 - Be concise but thorough`,
-  };
+  }; // ← this closes the prompts object
 
-  return prompts[exam] || prompts["General"];
-};
   const base = prompts[exam] || prompts["General"];
-
   const humanLayer = isQuiz ? "" : `\n\n${HUMAN_TOUCH_RULES}`;
 
   return `${IDENTITY_RULE}\n\n${base}${humanLayer}`;
