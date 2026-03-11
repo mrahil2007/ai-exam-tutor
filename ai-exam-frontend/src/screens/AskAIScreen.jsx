@@ -363,7 +363,8 @@ export default function AskAIScreen({
   const loadChatList = async () => {
     setLoadingChats(true);
     try {
-      const r = await fetch(`${API_URL}/chats/${userId}`);
+      const effectiveId = userId || anonId;
+      const r = await fetch(`${API_URL}/chats/${effectiveId}`);
       setChatList(await r.json());
     } catch {}
     setLoadingChats(false);
@@ -371,7 +372,8 @@ export default function AskAIScreen({
 
   const createNewChat = async (ex = exam) => {
     try {
-      const r = await fetch(`${API_URL}/chats/${userId}`, {
+      const effectiveId = userId || anonId;
+      const r = await fetch(`${API_URL}/chats/${effectiveId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ exam: ex }),
@@ -391,7 +393,8 @@ export default function AskAIScreen({
 
   const loadChat = async (id) => {
     try {
-      const r = await fetch(`${API_URL}/chats/${userId}/${id}`);
+      const effectiveId = userId || anonId;
+      const r = await fetch(`${API_URL}/chats/${effectiveId}/${id}`);
       const d = await r.json();
       setCurrentChatId(id);
       setMessages(d.messages || []);
@@ -404,7 +407,10 @@ export default function AskAIScreen({
   const deleteChat = async (id, e) => {
     e.stopPropagation();
     try {
-      await fetch(`${API_URL}/chats/${userId}/${id}`, { method: "DELETE" });
+      const effectiveId = userId || anonId;
+      await fetch(`${API_URL}/chats/${effectiveId}/${id}`, {
+        method: "DELETE",
+      });
       if (currentChatId === id) {
         setCurrentChatId(null);
         setMessages([]);

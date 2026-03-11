@@ -218,7 +218,8 @@ Rules:
 - Example: ["Preparing for UPSC 2026", "Weak in Economy", "Prefers Hindi"]
 `;
 
-    const raw = await askAI(extractPrompt, "General", [], true);
+    const raw = await callGroqForMemory(extractPrompt);
+    if (!raw) return;
     const cleaned = raw.replace(/```json|```/g, "").trim();
     const facts = JSON.parse(cleaned);
 
@@ -269,6 +270,67 @@ const mergeGuestMemory = async (anonId, realUserId) => {
   }
 };
 
+// Add this helper in server.js
+const callGroqForMemory = async (prompt) => {
+  const response = await fetch(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.1,
+        max_tokens: 500,
+      }),
+    }
+  );
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content?.trim();
+};
+// ── GROQ AGENT ROUTER (saves Gemini quota) ────────────────────────────────────
+const askAIAgentGroq = async (question) => {
+  try {
+    const prompt = `You are a routing agent for an exam prep app.
+Decide the best source to answer this question: "${question}"
+
+Reply with ONLY one of these exact words:
+- "web_search" → for current events, news, recent appointments, results, notifications
+- "direct" → for concepts, history, science, math, syllabus, general knowledge
+
+Reply with just the single word, nothing else.`;
+
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.1,
+          max_tokens: 10, // only needs one word
+        }),
+      }
+    );
+
+    const data = await response.json();
+    const answer = data.choices?.[0]?.message?.content?.trim().toLowerCase();
+
+    if (answer?.includes("web_search"))
+      return { action: "web_search", query: question };
+    return { action: "direct" };
+  } catch (err) {
+    console.warn("⚠️ Groq agent routing failed:", err.message);
+    return { action: "direct" };
+  }
+};
 // ── Mobile config ─────────────────────────────────────────────────────────────
 app.get("/mobile/config", (req, res) => {
   res.json({
@@ -781,7 +843,7 @@ app.post("/chat", async (req, res) => {
         question.trim()
       );
 
-    if (!isSimple) decision = await askAIAgent(question, exam);
+    if (!isSimple) decision = await askAIAgentGroq(question, exam);
 
     if (decision.action === "web_search") {
       const ctx = await fetchLiveSearchContext(decision.query);
@@ -798,9 +860,9 @@ app.post("/chat", async (req, res) => {
     const answer = await askAI(finalPrompt, exam, history, false, memory);
 
     // 4. Save chat to DB (logged-in users only)
-    if (userId && chatId) {
+    if (chatId && (userId || anonId)) {
       await getChats().updateOne(
-        { _id: new ObjectId(chatId), userId },
+        { _id: new ObjectId(chatId), userId: userId || anonId },
         {
           $push: {
             messages: {
@@ -1256,8 +1318,32 @@ app.post("/transcribe", upload.single("audio"), async (req, res) => {
 
 // ── Chart generation ──────────────────────────────────────────────────────────
 app.post("/chart/generate", async (req, res) => {
-  const { question } = req.body;
-  const prompt = `Generate a JSON chart for: ${question}. Valid JSON only.`;
+  const { question, exam = "General" } = req.body;
+  if (!question) return res.status(400).json({ error: "Question required" });
+
+  const prompt = `You are a data visualization expert for Indian competitive exams.
+Generate a chart for this topic: "${question}" for a ${exam} student.
+
+Return ONLY a valid JSON object in exactly this format — no markdown, no explanation:
+{
+  "type": "bar" | "line" | "pie" | "doughnut",
+  "title": "Chart title here",
+  "labels": ["Label1", "Label2", "Label3"],
+  "datasets": [
+    {
+      "label": "Dataset name",
+      "data": [10, 20, 30]
+    }
+  ],
+  "insight": "One line key insight from this data for exam preparation"
+}
+
+Rules:
+- Pick the best chart type for the data (pie for proportions, line for trends, bar for comparisons)
+- Use real, accurate data relevant to India and the ${exam} exam
+- Max 8 data points for readability
+- Return ONLY the JSON object, nothing else`;
+
   try {
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -1271,20 +1357,31 @@ app.post("/chart/generate", async (req, res) => {
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.1,
+          max_tokens: 1000,
         }),
       }
     );
+
+    if (!response.ok) throw new Error(`Groq error: ${response.status}`);
+
     const data = await response.json();
-    res.json(
-      JSON.parse(
-        data.choices[0].message.content.replace(/```json|```/g, "").trim()
-      )
-    );
-  } catch {
-    res.status(500).json({ type: "text", answer: "⚠️ Chart failed" });
+    const raw = data.choices?.[0]?.message?.content;
+    if (!raw) throw new Error("Empty response");
+
+    const cleaned = raw.replace(/```json|```/g, "").trim();
+
+    // ✅ Safe parse — extract JSON object even if extra text slips through
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start === -1 || end === -1) throw new Error("No JSON found");
+
+    const parsed = JSON.parse(cleaned.slice(start, end + 1));
+    res.json(parsed);
+  } catch (err) {
+    console.error("❌ Chart error:", err.message);
+    res.status(500).json({ error: "Chart generation failed" });
   }
 });
-
 // ── Data deletion ─────────────────────────────────────────────────────────────
 app.delete("/user/:userId/delete-data", async (req, res) => {
   const { userId } = req.params;
