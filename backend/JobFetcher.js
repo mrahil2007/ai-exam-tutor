@@ -301,6 +301,25 @@ export const runJobFetcher = async (getJobs) => {
   total += await fetchFromLinkedIn(getJobs);
 
   await markOldJobs(getJobs);
+  try {
+    const keepIds = await getJobs()
+      .find({})
+      .sort({ postedAt: -1 })
+      .limit(500)
+      .project({ _id: 1 })
+      .toArray()
+      .then((docs) => docs.map((d) => d._id));
+
+    const deleted = await getJobs().deleteMany({
+      _id: { $nin: keepIds },
+    });
+
+    if (deleted.deletedCount > 0) {
+      console.log(`🧹 Cleaned up ${deleted.deletedCount} old jobs`);
+    }
+  } catch (err) {
+    console.warn("⚠️ Job cleanup failed:", err.message);
+  }
   console.log(`\n✅ Fetch done. New jobs today: ${total}`);
 };
 
