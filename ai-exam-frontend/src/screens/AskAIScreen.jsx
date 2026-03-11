@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { G, EXAMS, EXAM_META, VOICES } from "../theme";
+import { G, EXAMS, EXAM_META } from "../theme";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const typeText = (text, setMessages, onDone) => {
@@ -298,7 +298,8 @@ export default function AskAIScreen({
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [voice, setVoice] = useState("hannah");
+  // Default voice — no user selection
+  const voice = "hannah";
   const [showExamMenu, setShowExamMenu] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -329,9 +330,6 @@ export default function AskAIScreen({
   useEffect(() => {
     chatIdRef.current = currentChatId;
   }, [currentChatId]);
-  useEffect(() => {
-    voiceRef.current = voice;
-  }, [voice]);
   useEffect(() => {
     msgEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -1076,115 +1074,11 @@ export default function AskAIScreen({
               Ask AI
             </span>
           </div>
+          {/* Exam selector only — voice dropdown removed */}
           <div
             style={{ display: "flex", alignItems: "center", gap: 6 }}
             onClick={(e) => e.stopPropagation()}
-          >
-            <select
-              value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              style={{
-                background: G.surface,
-                border: `1px solid ${G.border2}`,
-                borderRadius: 8,
-                padding: "5px 7px",
-                color: G.text,
-                fontSize: "0.75rem",
-                cursor: "pointer",
-                outline: "none",
-              }}
-            >
-              {VOICES.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-            <div style={{ position: "relative" }}>
-              <button
-                onClick={() => setShowExamMenu(!showExamMenu)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  background: G.surface,
-                  border: `1px solid ${G.border2}`,
-                  borderRadius: 8,
-                  padding: "5px 9px",
-                  color: G.text,
-                  fontSize: "0.76rem",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  maxWidth: 110,
-                  overflow: "hidden",
-                  fontFamily: "'Figtree',sans-serif",
-                }}
-              >
-                <span
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {exam}
-                </span>
-                <svg width="9" height="5" viewBox="0 0 10 6" fill="none">
-                  <path
-                    d="M1 1L5 5L9 1"
-                    stroke={G.muted}
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
-              {showExamMenu && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "calc(100% + 6px)",
-                    right: 0,
-                    background: G.surface,
-                    border: `1px solid ${G.border}`,
-                    borderRadius: 10,
-                    padding: 4,
-                    zIndex: 100,
-                    minWidth: 150,
-                    maxHeight: 280,
-                    overflowY: "auto",
-                    boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
-                  }}
-                >
-                  {EXAMS.map((e) => (
-                    <button
-                      key={e}
-                      onClick={() => {
-                        onChangeExam(e);
-                        setShowExamMenu(false);
-                      }}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        padding: "9px 12px",
-                        borderRadius: 7,
-                        background:
-                          exam === e ? "rgba(240,165,0,0.1)" : "transparent",
-                        border: "none",
-                        cursor: "pointer",
-                        color: exam === e ? G.gold : "#ddd",
-                        fontSize: "0.83rem",
-                        fontWeight: exam === e ? 600 : 400,
-                        fontFamily: "'Figtree',sans-serif",
-                      }}
-                    >
-                      {EXAM_META[e]?.icon} {e}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          ></div>
         </div>
 
         {/* Messages */}

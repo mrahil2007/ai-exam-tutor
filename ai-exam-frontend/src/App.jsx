@@ -27,34 +27,28 @@ import DeleteAccount from "./pages/DeleteAccount";
 const getAnonId = () => {
   let id = localStorage.getItem("examai_anon_id");
   if (!id) {
-    id = "anon_" + crypto.randomUUID(); // more unique than Math.random
+    id = "anon_" + crypto.randomUUID();
     localStorage.setItem("examai_anon_id", id);
   }
   return id;
 };
 const GUEST_USER_ID = getAnonId();
 
-// ── App states ────────────────────────────────────────────────────────────────
-// splash → landing → exam-select → main
-
 export default function App() {
-  // Route: delete-account page
   if (window.location.pathname === "/delete-account") return <DeleteAccount />;
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5050";
 
-  const [appState, setAppState] = useState("splash"); // splash | landing | exam-select | main
+  const [appState, setAppState] = useState("splash");
   const [exam, setExam] = useState(localStorage.getItem("examai_exam") || "");
-  const [activeTab, setActiveTab] = useState("askAI"); // askAI | mockTest | jobs
+  const [activeTab, setActiveTab] = useState("askAI");
   const [authUser, setAuthUser] = useState(null);
   const [authReady, setAuthReady] = useState(!firebaseAuth);
   const [signingOut, setSigningOut] = useState(false);
-  const [pendingAiPrompt, setPendingAiPrompt] = useState(null); // job → ask AI
+  const [pendingAiPrompt, setPendingAiPrompt] = useState(null);
 
-  // Effective user ID: use firebase uid if logged in, else guest id
   const userId = authUser?.uid || GUEST_USER_ID;
 
-  // ── Firebase auth listener ──
   useEffect(() => {
     if (!firebaseAuth) {
       setAuthReady(true);
@@ -66,7 +60,6 @@ export default function App() {
     });
   }, []);
 
-  // ── Handlers ──
   const handleExamSelect = (e) => {
     localStorage.setItem("examai_exam", e);
     setExam(e);
@@ -89,24 +82,16 @@ export default function App() {
     }
   };
 
-  // Job card "Ask AI" button → switch to Ask AI tab with pre-filled prompt
   const handleJobAskAI = (prompt) => {
     setPendingAiPrompt(prompt);
     setActiveTab("askAI");
   };
 
   const handlePromptUsed = () => setPendingAiPrompt(null);
-
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-    // Mock Test requires auth — if not logged in, tab still switches
-    // but MockTestScreen shows AuthGateScreen inside
-  };
-
+  const handleTabChange = (tab) => setActiveTab(tab);
   const goToLanding = () => setAppState("landing");
   const goToExamSelect = () => setAppState("exam-select");
 
-  // ── Render: Splash ──
   if (appState === "splash")
     return (
       <>
@@ -123,7 +108,6 @@ export default function App() {
       </>
     );
 
-  // ── Render: Landing ──
   if (appState === "landing")
     return (
       <>
@@ -149,7 +133,6 @@ export default function App() {
       </>
     );
 
-  // ── Render: Exam Select ──
   if (appState === "exam-select")
     return (
       <>
@@ -161,7 +144,6 @@ export default function App() {
       </>
     );
 
-  // ── Render: Main App ──
   return (
     <div
       style={{
@@ -180,17 +162,21 @@ export default function App() {
       {/* ── TOP BAR ── */}
       <div
         style={{
+          position: "relative",
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
           padding: "6px 14px 0",
           flexShrink: 0,
+          minHeight: 40,
         }}
       >
-        {/* Logo — tap to go to landing */}
+        {/* Center — ExamAI logo */}
         <button
           onClick={goToLanding}
           style={{
+            position: "absolute",
+            left: "50%",
+            transform: "translateX(-50%)",
             background: "transparent",
             border: "none",
             cursor: "pointer",
@@ -198,13 +184,21 @@ export default function App() {
             fontSize: "1.1rem",
             fontWeight: 900,
             color: G.text,
+            whiteSpace: "nowrap",
           }}
         >
           Exam<span style={{ color: G.gold }}>AI</span>
         </button>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {/* Exam switcher */}
+        {/* Right — exam switcher + sign in/out */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginLeft: "auto",
+          }}
+        >
           <button
             onClick={goToExamSelect}
             style={{
@@ -232,7 +226,6 @@ export default function App() {
             </svg>
           </button>
 
-          {/* Sign In / Sign Out — always visible */}
           {authUser ? (
             <button
               onClick={handleSignOut}
@@ -315,20 +308,18 @@ export default function App() {
           minHeight: 0,
         }}
       >
-        {/* Ask AI — no auth needed */}
         {activeTab === "askAI" && (
           <AskAIScreen
             exam={exam}
             onChangeExam={handleChangeExam}
             API_URL={API_URL}
-            userId={authUser?.uid || null} // 👈 real user ID or null
+            userId={authUser?.uid || null}
             anonId={GUEST_USER_ID}
             initialPrompt={pendingAiPrompt}
             onPromptUsed={handlePromptUsed}
           />
         )}
 
-        {/* Mock Test — shows auth gate if not logged in */}
         {activeTab === "mockTest" &&
           (authUser ? (
             <MockTestScreen
@@ -340,12 +331,10 @@ export default function App() {
             <AuthGateScreen />
           ))}
 
-        {/* Jobs — no auth needed */}
         {activeTab === "jobs" && (
           <JobsScreen exam={exam} API_URL={API_URL} onAskAI={handleJobAskAI} />
         )}
 
-        {/* Resume — no auth needed */}
         {activeTab === "resume" && (
           <ResumeScreen API_URL={API_URL} userId={userId} />
         )}
