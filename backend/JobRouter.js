@@ -5,21 +5,31 @@
 import { Router } from "express";
 import { ObjectId } from "mongodb";
 
-/**
- * @param {() => import('mongodb').Collection} getJobs  — db collection accessor
- */
 export default function createJobRouter(getJobs) {
   const router = Router();
 
   // ── GET /jobs — paginated list with optional filters ──────────────────────
   router.get("/", async (req, res) => {
     try {
-      const { exam, category, page = 1, limit = 20, isNew } = req.query;
+      const { exam, category, page = 1, limit = 20, isNew, search } = req.query;
 
       const filter = {};
       if (exam) filter.exam = { $in: [exam] };
-      if (category) filter.category = category;
+
+      // category filter: govt | pvt | international
+      if (category === "government") filter.category = "government";
+      if (category === "private") filter.category = "private";
+      if (category === "international") filter.category = "international";
+
       if (isNew !== undefined) filter.isNew = isNew === "true";
+
+      // Search: match title or organization (case-insensitive)
+      if (search && search.trim()) {
+        filter.$or = [
+          { title: { $regex: search.trim(), $options: "i" } },
+          { organization: { $regex: search.trim(), $options: "i" } },
+        ];
+      }
 
       const pageNum = Math.max(1, Number(page));
       const limitNum = Math.min(100, Math.max(1, Number(limit)));
@@ -46,7 +56,7 @@ export default function createJobRouter(getJobs) {
     }
   });
 
-  // ── GET /jobs/subscribe — must come BEFORE /:id to avoid ObjectId cast ────
+  // ── POST /jobs/subscribe ──────────────────────────────────────────────────
   router.post("/subscribe", (req, res) => {
     const { exam } = req.body;
     if (!exam) return res.status(400).json({ error: "exam required" });
@@ -64,7 +74,7 @@ export default function createJobRouter(getJobs) {
     });
   });
 
-  // ── GET /jobs/:id — single job detail ────────────────────────────────────
+  // ── GET /jobs/:id ─────────────────────────────────────────────────────────
   router.get("/:id", async (req, res) => {
     try {
       const job = await getJobs().findOne({ _id: new ObjectId(req.params.id) });
@@ -76,27 +86,34 @@ export default function createJobRouter(getJobs) {
     }
   });
 
-  // ── GET /jobs/:id/ask-ai — pre-built AI prompt for the chat screen ────────
+  // ── GET /jobs/:id/ask-ai ──────────────────────────────────────────────────
   router.get("/:id/ask-ai", async (req, res) => {
     try {
       const job = await getJobs().findOne({ _id: new ObjectId(req.params.id) });
       if (!job) return res.status(404).json({ error: "Job not found" });
 
-      const prompt = `I want complete information about this job:
+      const isIntl = job.category === "international";
+
+      const prompt = `I want complete information about this ${
+        isIntl ? "international" : "government"
+      } job:
 
 📌 **${job.title}**
 🏢 Organization: ${job.organization}
-📅 Last Date: ${job.lastDate}
-💼 Vacancies: ${job.vacancies}
-💰 Salary: ${job.salary}
+📍 Location: ${job.location || "N/A"}
+${
+  isIntl
+    ? `🌍 Country: ${job.country || "N/A"}\n💰 Salary: ${job.salary}`
+    : `📅 Last Date: ${job.lastDate}\n💼 Vacancies: ${job.vacancies}\n💰 Salary: ${job.salary}`
+}
 
 Please give me:
-1. ✅ **Eligibility Criteria** — age limit, education, nationality
-2. 📚 **Complete Syllabus** — subject-wise topics & exam pattern
-3. 💰 **Salary & Benefits** — pay scale, HRA, DA, allowances, job perks
-4. 📅 **Study Plan** — week-by-week preparation roadmap
-5. 📖 **Best Books** — top recommended books & free resources
-6. 🎯 **Selection Process** — all stages (Prelims / Mains / Interview / Physical)`;
+1. ✅ **Eligibility Criteria** — qualifications, experience, skills required
+2. 📚 **Role & Responsibilities** — what the job involves day-to-day
+3. 💰 **Salary & Benefits** — pay, perks, growth opportunities
+4. 📅 **How to Apply** — step-by-step application process
+5. 📖 **Preparation Tips** — skills to build, certifications to get
+6. 🎯 **Selection Process** — interview rounds, assessments`;
 
       res.json({ prompt, job });
     } catch (err) {

@@ -41,6 +41,7 @@ const rssParser = new Parser({
 
 // ── RSS feed sources ──────────────────────────────────────────────────────────
 const RSS_SOURCES = [
+  // ── Indian Govt Jobs ────────────────────────────────────────────────────────
   {
     url: "https://www.freejobalert.com/feed/",
     organization: "Various Govt Organizations",
@@ -54,6 +55,28 @@ const RSS_SOURCES = [
     exam: ["SSC", "UPSC", "Banking", "Railway", "State PSC", "General"],
     category: "government",
     source: "FreeJobAlert Latest",
+  },
+  // ── International Remote Jobs ───────────────────────────────────────────────
+  {
+    url: "https://remoteok.com/remote-jobs.rss",
+    organization: "Various Companies",
+    exam: ["General"],
+    category: "international",
+    source: "RemoteOK",
+  },
+  {
+    url: "https://weworkremotely.com/remote-jobs.rss",
+    organization: "Various Companies",
+    exam: ["General"],
+    category: "international",
+    source: "We Work Remotely",
+  },
+  {
+    url: "https://jobicy.com/?feed=job_feed",
+    organization: "Various Companies",
+    exam: ["General"],
+    category: "international",
+    source: "Jobicy",
   },
 ];
 
@@ -152,8 +175,9 @@ export const sendJobPush = async (job) => {
   }
 };
 
-// ── Fetch from a single RSS source ───────────────────────────────────────────
+// ── Titles to skip at ingestion ───────────────────────────────────────────────
 const SKIP_TITLES = [
+  // Junk/test posts
   "hello world",
   "dummy",
   "test post",
@@ -161,8 +185,37 @@ const SKIP_TITLES = [
   "ab dummy",
   "lorem ipsum",
   "untitled",
+  // Results & notifications (not job postings)
+  "result",
+  "results",
+  "answer key",
+  "admit card",
+  "call letter",
+  "cut off",
+  "cutoff",
+  "merit list",
+  "scorecard",
+  "score card",
+  "final answer",
+  "provisional answer",
+  "response sheet",
+  "document verification",
+  "dv schedule",
+  "exam date",
+  "exam schedule",
+  "hall ticket",
+  "interview schedule",
+  "interview letter",
+  "joining letter",
+  "appointment letter",
+  "selection list",
+  "waiting list",
+  "rank list",
+  "marks released",
+  "certificate verification",
 ];
 
+// ── Fetch from a single RSS source ───────────────────────────────────────────
 const fetchFromRSS = async (source, getJobs) => {
   try {
     console.log(`📡 RSS: ${source.source}`);
@@ -175,11 +228,16 @@ const fetchFromRSS = async (source, getJobs) => {
 
     const items = feed.items.slice(0, 20);
     let newCount = 0;
+    let skippedCount = 0;
 
     for (const item of items) {
       if (!item?.link || !item?.title) continue;
-      if (SKIP_TITLES.some((bad) => item.title.toLowerCase().includes(bad)))
+
+      const titleLower = item.title.toLowerCase();
+      if (SKIP_TITLES.some((bad) => titleLower.includes(bad))) {
+        skippedCount++;
         continue;
+      }
       if (item.title.trim().length < 15) continue;
 
       const exists = await getJobs().findOne({ applyLink: item.link });
@@ -209,7 +267,9 @@ const fetchFromRSS = async (source, getJobs) => {
       newCount++;
     }
 
-    console.log(`✅ ${source.source}: ${newCount} new jobs`);
+    console.log(
+      `✅ ${source.source}: ${newCount} new jobs (${skippedCount} skipped)`
+    );
     return newCount;
   } catch (err) {
     console.error(`❌ RSS [${source.source}]: ${err.message}`);
@@ -244,6 +304,9 @@ const fetchFromLinkedIn = async (getJobs) => {
 
       for (const item of results) {
         if (!item.jobUrl || !item.position) continue;
+
+        const titleLower = item.position.toLowerCase();
+        if (SKIP_TITLES.some((bad) => titleLower.includes(bad))) continue;
 
         const exists = await getJobs().findOne({ applyLink: item.jobUrl });
         if (exists) continue;
@@ -289,7 +352,7 @@ const markOldJobs = async (getJobs) => {
   );
 };
 
-// ── Main runner (exported so server.js can call it on boot) ───────────────────
+// ── Main runner ───────────────────────────────────────────────────────────────
 export const runJobFetcher = async (getJobs) => {
   console.log("\n🚀 Job fetcher started at", new Date().toISOString());
   let total = 0;
@@ -301,6 +364,22 @@ export const runJobFetcher = async (getJobs) => {
   total += await fetchFromLinkedIn(getJobs);
 
   await markOldJobs(getJobs);
+
+  // Clean existing result-type posts from DB
+  try {
+    const skipRegex = SKIP_TITLES.join("|");
+    const deleted = await getJobs().deleteMany({
+      title: { $regex: skipRegex, $options: "i" },
+    });
+    if (deleted.deletedCount > 0)
+      console.log(
+        `🧹 Removed ${deleted.deletedCount} result/notification posts from DB`
+      );
+  } catch (err) {
+    console.warn("⚠️ Result cleanup failed:", err.message);
+  }
+
+  // Keep only latest 500 jobs
   try {
     const keepIds = await getJobs()
       .find({})
@@ -310,20 +389,17 @@ export const runJobFetcher = async (getJobs) => {
       .toArray()
       .then((docs) => docs.map((d) => d._id));
 
-    const deleted = await getJobs().deleteMany({
-      _id: { $nin: keepIds },
-    });
-
-    if (deleted.deletedCount > 0) {
+    const deleted = await getJobs().deleteMany({ _id: { $nin: keepIds } });
+    if (deleted.deletedCount > 0)
       console.log(`🧹 Cleaned up ${deleted.deletedCount} old jobs`);
-    }
   } catch (err) {
     console.warn("⚠️ Job cleanup failed:", err.message);
   }
+
   console.log(`\n✅ Fetch done. New jobs today: ${total}`);
 };
 
-// ── Cron: every 6 hours at 12 am · 6 am · 12 pm · 6 pm IST ──────────────────
+// ── Cron: every 6 hours ───────────────────────────────────────────────────────
 export const startJobCron = (getJobs) => {
   cron.schedule("0 0,6,12,18 * * *", () => runJobFetcher(getJobs), {
     timezone: "Asia/Kolkata",

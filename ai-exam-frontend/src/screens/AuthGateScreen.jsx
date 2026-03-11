@@ -496,7 +496,7 @@ export default function AuthGateScreen() {
               type="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              placeholder="9876543210"
+              placeholder="Enter 10-digit phone number"
               autoComplete="tel"
               style={inp}
             />
@@ -537,8 +537,7 @@ export default function AuthGateScreen() {
               </>
             )}
             <div style={{ fontSize: "0.73rem", color: G.muted }}>
-              Country code auto-applied:{" "}
-              <code style={{ color: G.gold }}>{DEFAULT_CC}</code>
+              Country code : <code style={{ color: G.gold }}>{DEFAULT_CC}</code>
             </div>
             <div
               ref={rcRef}

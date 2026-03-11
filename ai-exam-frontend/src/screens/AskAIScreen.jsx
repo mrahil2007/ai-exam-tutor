@@ -1250,28 +1250,56 @@ export default function AskAIScreen({
                 }}
               >
                 {[
-                  "📚 Explain Newton's Laws of Motion",
-                  "🇮🇳 What is the Preamble of Indian Constitution?",
-                  "🎨 Generate image of a futuristic study room",
-                  "🔢 Solve: If 2x + 3 = 11, find x",
-                  "📝 Key topics I should study for today",
+                  { icon: "🎒", text: "Explain Newton's Laws of Motion" },
+                  {
+                    icon: "🇮🇳",
+                    text: "What is the Preamble of Indian Constitution?",
+                  },
+                  {
+                    icon: "🎨",
+                    text: "Generate image of a futuristic study room",
+                  },
+                  { icon: "🔢", text: "Solve: If 2x + 3 = 11, find x" },
+                  { icon: "📋", text: "Key topics I should study for today" },
                 ].map((s, i) => (
                   <button
                     key={i}
-                    onClick={() => setInput(s.slice(3))}
+                    onClick={() => setInput(s.text)}
                     style={{
-                      background: G.surface,
-                      border: `1px solid ${G.border2}`,
-                      borderRadius: 10,
-                      padding: "11px 14px",
-                      color: "#ddd",
-                      fontSize: "0.84rem",
-                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      width: "100%",
+                      padding: "12px 16px",
+                      background: "rgba(255,255,255,0.05)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "12px",
+                      color: "white",
+                      fontSize: "14px",
                       cursor: "pointer",
-                      fontFamily: "'Figtree',sans-serif",
+                      textAlign: "left",
+                      transition: "background 0.2s",
                     }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background =
+                        "rgba(255,255,255,0.12)")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background =
+                        "rgba(255,255,255,0.05)")
+                    }
                   >
-                    {s}
+                    <span
+                      style={{
+                        fontSize: "18px",
+                        fontFamily:
+                          "Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {s.icon}
+                    </span>
+                    <span>{s.text}</span>
                   </button>
                 ))}
               </div>
