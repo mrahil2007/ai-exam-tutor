@@ -104,7 +104,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: "10kb" }));
-
+const getCurrentAffairs = () => db.collection("current_affairs");
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -151,6 +151,11 @@ const client = new MongoClient(process.env.MONGODB_URI);
 async function connectDB() {
   await client.connect();
   db = client.db("examai");
+  await db.collection("quizzes").createIndex({ topic: 1, exam: 1 });
+  await db
+    .collection("quiz_results")
+    .createIndex({ userId: 1, exam: 1, topic: 1, quizId: 1 });
+
   console.log("✅ MongoDB connected");
 }
 
@@ -161,7 +166,8 @@ const getFlashcards = () => db.collection("flashcards");
 const getJobs = () => db.collection("jobs");
 const getUsers = () => db.collection("users");
 const getResumes = () => db.collection("resumes");
-const getMemories = () => db.collection("memories"); // 👈 NEW
+const getMemories = () => db.collection("memories");
+const getQuizzes = () => db.collection("quizzes");
 
 app.use("/jobs", createJobRouter(getJobs));
 app.use("/resume", createResumeRouter(getResumes));
@@ -956,32 +962,84 @@ app.post("/user/merge-memory", async (req, res) => {
 // ── Quiz ──────────────────────────────────────────────────────────────────────
 app.post("/quiz/generate", async (req, res) => {
   const { topic, exam = "General", count = 10, userId, state } = req.body;
+
   if (!checkUserRateLimit(userId))
     return res.status(429).json({ error: "Limit reached" });
+
   if (!topic) return res.status(400).json({ error: "Topic required" });
+
   const safeCount = Math.min(Number(count) || 10, 20);
   const finalTopic =
     exam === "State PCS" && state ? `${state} — ${topic}` : topic;
+
+  // ── 1. Find quizzes on this topic/exam this user hasn't solved yet ──────
+  if (userId) {
+    const solvedResults = await getQuizResults()
+      .find({ userId, exam, topic: finalTopic, quizId: { $ne: null } })
+      .project({ quizId: 1 })
+      .toArray();
+
+    const solvedIds = solvedResults.map((r) => r.quizId).filter(Boolean);
+
+    const existingQuiz = await getQuizzes().findOne({
+      topic: finalTopic,
+      exam,
+      // Exclude quizzes this user already solved
+      ...(solvedIds.length ? { _id: { $nin: solvedIds } } : {}),
+      // Only reuse quizzes solved by at least 1 other user (they're "validated")
+      // OR any quiz if there's nothing solved yet
+      createdAt: { $exists: true },
+    });
+
+    if (existingQuiz) {
+      console.log(`♻️ Serving pooled quiz ${existingQuiz._id} to ${userId}`);
+      return res.json({
+        quizId: existingQuiz._id,
+        questions: existingQuiz.questions,
+        contextUsed: false,
+        reused: true,
+      });
+    }
+  }
+
+  // ── 2. No suitable pooled quiz — generate a new one ────────────────────
   const contextBlock =
     exam === "Current Affairs"
       ? await fetchLiveSearchContext(
           `${finalTopic} India government PIB official`
         )
       : "";
+
   const prompt = getQuizPrompt(exam, finalTopic, safeCount, contextBlock);
+
   try {
     const content = await generateAIContent(prompt, !!contextBlock);
     const questions = extractJSONArray(
       content.replace(/```json|```/gi, "").trim()
     );
-    res.json({ questions, contextUsed: !!contextBlock });
-  } catch {
+
+    const quizDoc = {
+      topic: finalTopic,
+      exam,
+      questions,
+      createdAt: new Date(),
+    };
+
+    const result = await getQuizzes().insertOne(quizDoc);
+
+    res.json({
+      quizId: result.insertedId,
+      questions,
+      contextUsed: !!contextBlock,
+      reused: false,
+    });
+  } catch (err) {
+    console.error("❌ Quiz generation error:", err.message);
     res.status(500).json({ error: "Quiz failed" });
   }
 });
-
 app.post("/quiz/result", async (req, res) => {
-  const { userId, topic, exam, score, total, timeTaken } = req.body;
+  const { userId, topic, exam, score, total, timeTaken, quizId } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
   try {
     await getQuizResults().insertOne({
@@ -992,6 +1050,7 @@ app.post("/quiz/result", async (req, res) => {
       total,
       percentage: Math.round((score / total) * 100),
       timeTaken,
+      quizId: quizId ? new ObjectId(quizId) : null, // ← track which shared quiz
       createdAt: new Date(),
     });
     res.json({ success: true });
@@ -1014,191 +1073,192 @@ app.get("/quiz/history/:userId", async (req, res) => {
 });
 
 // ── Current affairs ───────────────────────────────────────────────────────────
+
 app.get("/current-affairs/:exam", async (req, res) => {
   const { exam } = req.params;
+  const lang = req.query.lang === "hinglish" ? "hinglish" : "english";
   const today = new Date().toISOString().split("T")[0];
-  try {
-    const liveContext = await fetchLiveSearchContext(
-      `latest current affairs for ${exam} exam India ${today}`
-    );
-    const prompt = `You are an expert news editor for competitive exams.
-Based on these search results:
-${liveContext}
 
-Create a summary of the top 5 most important news items for a ${exam} aspirant today (${today}).
-Return ONLY valid JSON:
-{
-  "date": "${today}",
-  "summaries": ["News item 1 summary", "..."],
-  "quiz": []
-}`;
-    const aiResponse = await generateAIContent(prompt);
-    const digest = JSON.parse(aiResponse.replace(/```json|```/g, "").trim());
-    res.json(digest);
-  } catch {
-    res.json({
-      date: today,
-      summaries: [
-        "Stay tuned for today's top updates.",
-        "Check official government portals for the latest notifications.",
-      ],
-      quiz: [],
-    });
-  }
-});
-
-// ── Flashcards ────────────────────────────────────────────────────────────────
-app.get("/flashcards/:userId", async (req, res) => {
   try {
-    const cards = await getFlashcards()
-      .find({ userId: req.params.userId })
-      .sort({ createdAt: -1 })
-      .toArray();
-    res.json(cards);
-  } catch {
-    res.status(500).json({ error: "Failed to load flashcards" });
-  }
-});
-
-app.post("/flashcards/generate", async (req, res) => {
-  const { topic, exam = "General", count = 10, userId } = req.body;
-  if (!topic || !userId)
-    return res.status(400).json({ error: "Topic and userId required" });
-  const safeCount = Math.min(Number(count) || 10, 20);
-  try {
-    let content = await generateAIContent(
-      getFlashcardPrompt(exam, topic, safeCount)
-    );
-    if (!content) throw new Error("AI failed");
-    content = content
-      .replace(/```json/gi, "")
-      .replace(/```/g, "")
-      .trim();
-    const rawCards = extractJSONArray(content);
-    const cards = rawCards.map((c) => ({
-      ...c,
-      userId,
-      interval: 0,
-      lastReviewed: null,
-      createdAt: new Date(),
-    }));
-    if (cards.length > 0) await getFlashcards().insertMany(cards);
-    res.json({ cards });
-  } catch (err) {
-    console.error("Flashcard error:", err.message);
-    res.status(500).json({ error: "Failed to generate flashcards" });
-  }
-});
-
-app.post("/flashcards/review", async (req, res) => {
-  const { cardId, difficulty } = req.body;
-  const inc = { EASY: 7, GOOD: 3, HARD: 1 }[difficulty] || 1;
-  try {
-    await getFlashcards().updateOne(
-      { _id: new ObjectId(cardId) },
-      { $set: { lastReviewed: new Date() }, $inc: { interval: inc } }
-    );
-    res.json({ success: true });
-  } catch {
-    res.status(500).json({ error: "Failed to update review" });
-  }
-});
-
-// ── Study planner ─────────────────────────────────────────────────────────────
-app.post("/planner/generate", async (req, res) => {
-  const { exam, examDate, hoursPerDay = 4, userId } = req.body;
-  if (!exam || !examDate)
-    return res.status(400).json({ error: "exam and examDate required" });
-  const daysLeft = Math.max(
-    1,
-    Math.ceil((new Date(examDate) - new Date()) / 86400000)
-  );
-  const planDays = Math.min(daysLeft, 30);
-  const prompt = `Create a ${planDays}-day study plan for ${exam} exam on ${examDate}. Study time: ${hoursPerDay} hours/day. Return ONLY valid JSON.`;
-  try {
-    const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "meta-llama/llama-4-scout-17b-16e-instruct",
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.4,
-          max_tokens: 8000,
-        }),
-      }
-    );
-    const data = await response.json();
-    const plan = JSON.parse(
-      data.choices?.[0]?.message?.content?.trim().replace(/```json|```/g, "")
-    );
-    if (userId) {
-      const existing = await getPlanners().findOne({ userId, exam });
-      if (existing) {
-        await getPlanners().updateOne(
-          { _id: existing._id },
-          { $set: { ...plan, userId, updatedAt: new Date() } }
-        );
-        plan._id = existing._id;
-      } else {
-        const result = await getPlanners().insertOne({
-          ...plan,
-          userId,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-        plan._id = result.insertedId;
-      }
+    // ── 1. Check cache (exam + date + lang) ───────────────────────────────
+    const cached = await db
+      .collection("current_affairs")
+      .findOne({ date: today, exam, lang });
+    if (cached?.affairs?.length >= 20) {
+      console.log(`[CA] Cache hit: ${exam} | ${lang} | ${today}`);
+      return res.json({
+        date: today,
+        exam,
+        lang,
+        affairs: cached.affairs,
+        cached: true,
+      });
     }
-    res.json({ plan });
-  } catch {
-    res.status(500).json({ error: "Planner failed" });
-  }
-});
 
-app.get("/planner/:userId", async (req, res) => {
-  try {
-    const planners = await getPlanners()
-      .find({ userId: req.params.userId })
-      .sort({ updatedAt: -1 })
-      .toArray();
-    res.json(planners);
-  } catch {
-    res.status(500).json({ error: "Failed to load planners" });
-  }
-});
+    console.log(`[CA] Generating: ${exam} | ${lang} | ${today}`);
 
-app.patch("/planner/:plannerId/day/:dayIndex", async (req, res) => {
-  const { completed } = req.body;
-  try {
-    await getPlanners().updateOne(
-      { _id: new ObjectId(req.params.plannerId) },
+    // ── 2. Parallel Serper fetches ────────────────────────────────────────
+    const queries = [
+      `India government policy news today ${today}`,
+      `India current affairs ${exam} exam ${today}`,
+      `India economy RBI budget markets news today`,
+      `India international relations diplomacy today`,
+      `India science technology ISRO space news today`,
+      `India sports cricket achievements news today`,
+      `India environment climate wildlife news today`,
+      `India defence military border news today`,
+      `India health ministry news today`,
+      `India awards appointments news today`,
+    ];
+
+    const newsResults = [];
+    await Promise.allSettled(
+      queries.map(async (q) => {
+        try {
+          const r = await fetch("https://google.serper.dev/news", {
+            method: "POST",
+            headers: {
+              "X-API-KEY": process.env.SERPER_API_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ q, num: 10, gl: "in", hl: "en" }),
+          });
+          const data = await r.json();
+          if (data.news?.length) newsResults.push(...data.news);
+        } catch (e) {
+          console.warn(`[CA] Serper failed: "${q}"`, e.message);
+        }
+      })
+    );
+
+    // Deduplicate by title
+    const seen = new Set();
+    const unique = newsResults.filter((n) => {
+      if (!n.title || seen.has(n.title)) return false;
+      seen.add(n.title);
+      return true;
+    });
+
+    console.log(`[CA] ${unique.length} unique headlines from Serper`);
+    if (unique.length < 5) throw new Error("Not enough Serper results");
+
+    // ── 3. Language instruction ───────────────────────────────────────────
+    const langInstruction =
+      lang === "hinglish"
+        ? `Sab kuch Hinglish mein likho — Hindi words Roman script mein likhna.
+         Style: ek young Indian dost jo news explain kar raha ho, casual but informative.
+         Example headline: "RBI ne repo rate 6.25% pe hold kiya, teesri baar!"
+         Example summary: "Aaj cabinet ne ek bada faisla liya — 1,400 naye projects
+         roads aur railways ke liye approve hue. Tier-2 cities ko sabse zyada faayda hoga."
+         Example examRelevance: "Yeh topic Economy aur Fiscal Policy ke liye important hai —
+         UPSC aur SSC mein government schemes frequently pooche jaate hain."
+         Rules:
+         - Proper nouns English mein: RBI, ISRO, GDP, Modi, India, Pakistan
+         - Numbers hamesha numerals mein: 1,300 (not "ek hazar teen sau")
+         - Headline max 12 words, punchy aur direct
+         - Summary 2-3 sentences only
+         - examRelevance bhi Hinglish mein likho`
+        : `Write everything in clear, simple English.
+         Style: professional news anchor — factual, concise, no fluff.
+         Headline: max 12 words, specific and informative.
+         Summary: 2-3 sentences — what happened, key facts, why it matters.
+         examRelevance: which subject/topic this relates to for ${exam} exam preparation.`;
+
+    // ── 4. Single Groq call — summarize + language in one shot ───────────
+    const prompt = `Today is ${today}. Here are Google News headlines for ${exam} exam students in India:
+
+${unique
+  .map(
+    (n, i) =>
+      `${i + 1}. ${n.title}${n.snippet ? ` — ${n.snippet}` : ""} [${
+        n.source || ""
+      }]`
+  )
+  .join("\n")}
+
+LANGUAGE INSTRUCTION:
+${langInstruction}
+
+Pick the 40-50 most exam-relevant items from the list above.
+Return ONLY a raw JSON array — no markdown, no backticks, no explanation before or after.
+
+[
+  {
+    "id": "ca_1",
+    "category": "National",
+    "headline": "...",
+    "summary": "...",
+    "importance": "high",
+    "examRelevance": "...",
+    "tags": ["${exam}", "relevant topic"]
+  }
+]
+
+Rules:
+- category must be exactly one of: National, International, Economy, Science & Tech, Sports, Environment, Awards, Defence, Health
+- importance: "high" for 15-20 most critical items, "medium" for the rest
+- Spread items across all 9 categories — do not skip any
+- Follow the language instruction strictly for ALL text fields`;
+
+    const raw = await callGroqWithFallback(prompt, true);
+    if (!raw) throw new Error("Groq returned empty response");
+
+    // Safe JSON extract
+    const start = raw.indexOf("[");
+    const end = raw.lastIndexOf("]");
+    if (start === -1 || end === -1)
+      throw new Error("No JSON array found in response");
+
+    const affairs = JSON.parse(raw.slice(start, end + 1));
+    if (!Array.isArray(affairs) || affairs.length < 10) {
+      throw new Error(`Too few items returned: ${affairs?.length}`);
+    }
+
+    // ── 5. Cache result ───────────────────────────────────────────────────
+    await db.collection("current_affairs").updateOne(
+      { date: today, exam, lang },
       {
         $set: {
-          [`days.${req.params.dayIndex}.completed`]: completed,
-          updatedAt: new Date(),
+          date: today,
+          exam,
+          lang,
+          affairs,
+          generatedAt: new Date(),
+          sourceCount: unique.length,
         },
-      }
+      },
+      { upsert: true }
     );
-    res.json({ success: true });
-  } catch {
-    res.status(500).json({ error: "Failed update" });
-  }
-});
 
-app.delete("/planner/:userId/:plannerId", async (req, res) => {
-  try {
-    await getPlanners().deleteOne({
-      _id: new ObjectId(req.params.plannerId),
-      userId: req.params.userId,
-    });
-    res.json({ success: true });
-  } catch {
-    res.status(500).json({ error: "Delete failed" });
+    console.log(
+      `[CA] ✅ ${affairs.length} items saved — ${exam} | ${lang} | ${today}`
+    );
+    res.json({ date: today, exam, lang, affairs });
+  } catch (err) {
+    console.error("[CA] ❌", err.message);
+
+    // Fallback: return stale cache rather than blank screen
+    const stale = await db
+      .collection("current_affairs")
+      .findOne({ exam, lang }, { sort: { date: -1 } });
+
+    if (stale?.affairs?.length) {
+      console.log(
+        `[CA] Stale cache fallback: ${exam} | ${lang} | ${stale.date}`
+      );
+      return res.json({
+        date: stale.date,
+        exam,
+        lang,
+        affairs: stale.affairs,
+        cached: true,
+        stale: true,
+      });
+    }
+
+    res
+      .status(500)
+      .json({ error: "Failed to fetch current affairs", details: err.message });
   }
 });
 
