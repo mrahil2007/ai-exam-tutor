@@ -298,7 +298,6 @@ export default function AskAIScreen({
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  // Default voice — no user selection
   const voice = "hannah";
   const [showExamMenu, setShowExamMenu] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -343,8 +342,6 @@ export default function AskAIScreen({
   useEffect(() => {
     loadChatList();
   }, []);
-
-  // Auto-send initial prompt from Jobs tab
   useEffect(() => {
     if (!initialPrompt) return;
     setInput(initialPrompt);
@@ -363,8 +360,18 @@ export default function AskAIScreen({
     try {
       const effectiveId = userId || anonId;
       const r = await fetch(`${API_URL}/chats/${effectiveId}`);
-      setChatList(await r.json());
-    } catch {}
+      const data = await r.json();
+      // Always store an array regardless of API response shape
+      setChatList(
+        Array.isArray(data)
+          ? data
+          : Array.isArray(data?.chats)
+          ? data.chats
+          : []
+      );
+    } catch {
+      setChatList([]);
+    }
     setLoadingChats(false);
   };
 
@@ -441,7 +448,6 @@ export default function AskAIScreen({
       { role: "user", content: text },
       { role: "assistant", content: "" },
     ]);
-
     const imgPrompt = extractImagePrompt(text);
     if (imgPrompt) {
       const result = await resolvePollinationsUrl(imgPrompt, API_URL);
@@ -460,7 +466,6 @@ export default function AskAIScreen({
       setLoading(false);
       return;
     }
-
     const hist = buildHistory([...prev, { role: "user", content: text }]);
     try {
       const r = await fetch(`${API_URL}/chat`, {
@@ -703,6 +708,7 @@ export default function AskAIScreen({
       showToast("🎤 Mic access denied.");
     }
   };
+
   const stopListening = () => {
     if (mrRef.current && mrRef.current.state === "recording") {
       mrRef.current.stop();
@@ -734,6 +740,7 @@ export default function AskAIScreen({
     if (days < 7) return `${days} days ago`;
     return date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   };
+
   const isEmpty = messages.length === 0;
 
   return (
@@ -750,7 +757,6 @@ export default function AskAIScreen({
         setShowAttachMenu(false);
       }}
     >
-      {/* Sidebar overlay */}
       {showSidebar && (
         <div
           onClick={() => setShowSidebar(false)}
@@ -1074,7 +1080,6 @@ export default function AskAIScreen({
               Ask AI
             </span>
           </div>
-          {/* Exam selector only — voice dropdown removed */}
           <div
             style={{ display: "flex", alignItems: "center", gap: 6 }}
             onClick={(e) => e.stopPropagation()}
@@ -1471,7 +1476,6 @@ export default function AskAIScreen({
               🎤 Recording...
             </div>
           )}
-
           <div
             style={{
               display: "flex",
@@ -1792,7 +1796,8 @@ export default function AskAIScreen({
                 {
                   label: "Gallery",
                   desc: "Pick image",
-                  bg: "linear-gradient(135deg,#7c3aed,#4f46e5)",
+                  // ── CHANGED: was "linear-gradient(135deg,#7c3aed,#4f46e5)" (purple) ──
+                  bg: `linear-gradient(135deg,${G.gold},${G.teal})`,
                   ref: fileRef,
                   icon: (
                     <svg

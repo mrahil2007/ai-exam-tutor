@@ -10,6 +10,7 @@ import AskAIScreen from "./screens/AskAIScreen";
 import MockTestScreen from "./screens/MockTestScreen";
 import ResumeScreen from "./screens/Resumescreen";
 import JobsScreen from "./screens/JobsScreen";
+import CurrentAffairsScreen from "./screens/CurrentAffairsScreen";
 
 // ── Components ────────────────────────────────────────────────────────────────
 import TabBar from "./components/TabBar";
@@ -159,10 +160,13 @@ export default function App() {
     >
       <style>{GLOBAL_STYLES}</style>
 
-      {/* ── TOP BAR ── */}
+      {/* ── TOP BAR ─────────────────────────────────────────────────────────
+          3-column layout: [left spacer] [center logo] [right controls]
+          The left spacer mirrors the right controls width so the logo
+          stays truly centered without overlapping anything.
+      ── */}
       <div
         style={{
-          position: "relative",
           display: "flex",
           alignItems: "center",
           padding: "6px 14px 0",
@@ -170,13 +174,13 @@ export default function App() {
           minHeight: 40,
         }}
       >
+        {/* Left — invisible spacer that matches right side width */}
+        <div style={{ flex: 1 }} />
+
         {/* Center — ExamAI logo */}
         <button
           onClick={goToLanding}
           style={{
-            position: "absolute",
-            left: "50%",
-            transform: "translateX(-50%)",
             background: "transparent",
             border: "none",
             cursor: "pointer",
@@ -185,6 +189,8 @@ export default function App() {
             fontWeight: 900,
             color: G.text,
             whiteSpace: "nowrap",
+            flexShrink: 0,
+            padding: "0 8px",
           }}
         >
           Exam<span style={{ color: G.gold }}>AI</span>
@@ -193,30 +199,49 @@ export default function App() {
         {/* Right — exam switcher + sign in/out */}
         <div
           style={{
+            flex: 1,
             display: "flex",
             alignItems: "center",
-            gap: 8,
-            marginLeft: "auto",
+            justifyContent: "flex-end",
+            gap: 6,
           }}
         >
+          {/* Exam selector */}
           <button
             onClick={goToExamSelect}
             style={{
               background: "transparent",
               border: `1px solid ${G.border2}`,
               borderRadius: 8,
-              padding: "4px 10px",
+              padding: "4px 8px",
               color: G.muted,
               fontSize: "0.72rem",
               cursor: "pointer",
               display: "flex",
               alignItems: "center",
-              gap: 5,
+              gap: 4,
               fontFamily: "'Figtree',sans-serif",
+              maxWidth: 110,
+              overflow: "hidden",
             }}
           >
-            {EXAM_META[exam]?.icon} {exam}
-            <svg width="8" height="5" viewBox="0 0 10 6" fill="none">
+            <span style={{ flexShrink: 0 }}>{EXAM_META[exam]?.icon}</span>
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {exam}
+            </span>
+            <svg
+              width="8"
+              height="5"
+              viewBox="0 0 10 6"
+              fill="none"
+              style={{ flexShrink: 0 }}
+            >
               <path
                 d="M1 1L5 5L9 1"
                 stroke={G.muted}
@@ -226,6 +251,7 @@ export default function App() {
             </svg>
           </button>
 
+          {/* Sign in / out */}
           {authUser ? (
             <button
               onClick={handleSignOut}
@@ -234,7 +260,7 @@ export default function App() {
                 background: "transparent",
                 border: `1px solid rgba(229,62,62,0.35)`,
                 borderRadius: 8,
-                padding: "5px 11px",
+                padding: "5px 10px",
                 color: "#e07070",
                 fontSize: "0.72rem",
                 fontWeight: 600,
@@ -243,7 +269,8 @@ export default function App() {
                 opacity: signingOut ? 0.6 : 1,
                 display: "flex",
                 alignItems: "center",
-                gap: 5,
+                gap: 4,
+                whiteSpace: "nowrap",
               }}
             >
               <svg
@@ -268,7 +295,7 @@ export default function App() {
                 background: `linear-gradient(135deg,${G.gold},${G.saffron})`,
                 border: "none",
                 borderRadius: 8,
-                padding: "5px 11px",
+                padding: "5px 10px",
                 color: "#000",
                 fontSize: "0.72rem",
                 fontWeight: 700,
@@ -276,7 +303,8 @@ export default function App() {
                 fontFamily: "'Figtree',sans-serif",
                 display: "flex",
                 alignItems: "center",
-                gap: 5,
+                gap: 4,
+                whiteSpace: "nowrap",
               }}
             >
               <svg
@@ -330,6 +358,10 @@ export default function App() {
           ) : (
             <AuthGateScreen />
           ))}
+
+        {activeTab === "news" && (
+          <CurrentAffairsScreen exam={exam} API_URL={API_URL} />
+        )}
 
         {activeTab === "jobs" && (
           <JobsScreen exam={exam} API_URL={API_URL} onAskAI={handleJobAskAI} />
