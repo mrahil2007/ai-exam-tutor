@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://examai-in.com/sitemap.xml
