@@ -28,10 +28,9 @@ import admin from "firebase-admin";
 
 // ── Separated modules ─────────────────────────────────────────────────────────
 import { initFirebase, runJobFetcher, startJobCron } from "./JobFetcher.js";
+import cron from "node-cron";
 import createJobRouter from "./JobRouter.js";
 import createResumeRouter from "./ResumeBuilder.js";
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 if (!process.env.GROQ_API_KEY) {
   console.error("❌ GROQ_API_KEY missing!");
@@ -42,7 +41,7 @@ if (!process.env.MONGODB_URI) {
   process.exit(1);
 }
 
-// ── Firebase Admin init (ESM-safe) ────────────────────────────────────────────
+// ── Firebase Admin init ───────────────────────────────────────────────────────
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
   try {
     if (!admin.apps.length) {
@@ -58,6 +57,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 } else {
   console.warn("⚠️ FIREBASE_SERVICE_ACCOUNT not set — FCM push disabled.");
 }
+
 // ── FCM helper ────────────────────────────────────────────────────────────────
 export const sendPushNotification = async (
   token,
@@ -104,7 +104,7 @@ app.use(
   })
 );
 app.use(express.json({ limit: "10kb" }));
-const getCurrentAffairs = () => db.collection("current_affairs");
+
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -155,7 +155,6 @@ async function connectDB() {
   await db
     .collection("quiz_results")
     .createIndex({ userId: 1, exam: 1, topic: 1, quizId: 1 });
-
   console.log("✅ MongoDB connected");
 }
 
@@ -172,9 +171,274 @@ const getQuizzes = () => db.collection("quizzes");
 app.use("/jobs", createJobRouter(getJobs));
 app.use("/resume", createResumeRouter(getResumes));
 
+// ── All exams + languages to pre-generate daily ──────────────────────────────
+const ALL_EXAMS = [
+  "UPSC",
+  "SSC CGL",
+  "SSC CHSL",
+  "Banking",
+  "Railway",
+  "Defence",
+  "State PSC",
+  "Teaching",
+  "Police",
+  "General",
+];
+const ALL_LANGS = ["english", "hinglish"];
+
+// Pre-generate current affairs for one exam+lang combo
+const pregenerateCA = async (exam, lang) => {
+  const today = new Date().toISOString().split("T")[0];
+  const cacheKey = `${exam}|${lang}|${today}`;
+
+  // Skip if already generated today
+  const existing = await db
+    .collection("current_affairs")
+    .findOne({ date: today, exam, lang });
+  if (existing?.affairs?.length >= 15) {
+    console.log(`[CRON] Already done: ${exam} | ${lang}`);
+    return;
+  }
+
+  // Skip if another instance is generating
+  if (caGenerating.has(cacheKey)) {
+    console.log(`[CRON] Already in progress: ${exam} | ${lang}`);
+    return;
+  }
+
+  caGenerating.add(cacheKey);
+  console.log(`[CRON] Generating: ${exam} | ${lang}`);
+
+  try {
+    const isHinglish = lang === "hinglish";
+
+    // Fetch Serper headlines
+    const queries = isHinglish
+      ? [
+          `${exam} exam current affairs India today`,
+          "India government news today hindi",
+          "India economy science sports news",
+        ]
+      : [
+          `${exam} exam current affairs India today`,
+          "India government policy news today",
+          "India economy science sports news",
+        ];
+
+    const fetchSerper = async (q) => {
+      try {
+        const r = await fetch("https://google.serper.dev/news", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-KEY": process.env.SERPER_API_KEY,
+          },
+          body: JSON.stringify({ q, num: 20, gl: "in", hl: "en" }),
+        });
+        const d = await r.json();
+        return (d.news || []).map((n) => ({
+          title: n.title,
+          snippet: n.snippet,
+          source: n.source,
+        }));
+      } catch {
+        return [];
+      }
+    };
+
+    const allResults = (await Promise.all(queries.map(fetchSerper))).flat();
+    const seen = new Set();
+    const unique = allResults.filter((n) => {
+      if (!n.title || seen.has(n.title)) return false;
+      seen.add(n.title);
+      return true;
+    });
+
+    if (unique.length < 5) {
+      console.warn(`[CRON] Not enough headlines for ${exam} | ${lang}`);
+      caGenerating.delete(cacheKey);
+      return;
+    }
+
+    console.log(
+      `[CRON] ${unique.length} headlines → generating ${exam} | ${lang}`
+    );
+
+    // Build prompts (same as route)
+    const buildHinglishPrompt = (
+      headlines,
+      pickCount
+    ) => `⚠️ CRITICAL: You MUST write ALL output in Hinglish (Hindi words in Roman script). Writing in English = WRONG and USELESS.
+
+BAD headline: "RBI holds repo rate at 6.25% for the third time"
+GOOD headline: "RBI ne teesri baar repo rate 6.25% pe hold kiya"
+
+BAD summary (REJECTED — too short, English): "The RBI held repo rate. This affects economy."
+GOOD summary: "RBI ki Monetary Policy Committee ne April 2025 mein repo rate 6.25% pe hold kiya. Yeh teesri baar hua jab rate unchanged raha. Governor Sanjay Malhotra ne kaha ki inflation abhi bhi 4.9% hai jo target se zyada hai. India ki GDP growth 6.7% rehne ka anuman hai FY2026 mein. Analysts ka kehna hai ki rate cut tabhi hoga jab inflation 4.5% se neeche aaye, shayad June ya August mein."
+
+Today is ${today}. Headlines for ${exam} exam students:
+
+${headlines
+  .map(
+    (n, i) =>
+      `${i + 1}. ${n.title}${n.snippet ? ` — ${n.snippet}` : ""} [${
+        n.source || ""
+      }]`
+  )
+  .join("\n")}
+
+🚨 HINGLISH RULES:
+- EVERY word in Hinglish (Hindi in Roman script)
+- Proper nouns stay English: RBI, ISRO, Modi, India, GDP, Supreme Court, Parliament
+- Numbers always as numerals: 6.25%, ₹1,300 crore, 47 seats
+- summary: MINIMUM 120 words, 5-6 sentences with specific facts, numbers, names, dates
+
+Pick ${pickCount} most exam-relevant items. Return ONLY a raw JSON array — no markdown:
+[{
+  "id": "ca_1",
+  "category": "National",
+  "headline": "Hinglish mein specific headline",
+  "summary": "5-6 sentences Hinglish mein — kya hua, kab hua, kaun involved, kyun hua, numbers/facts zaroor, aage kya hoga — MINIMUM 120 words",
+  "importance": "high",
+  "examRelevance": "Konsa exam topic, konsa paper, kyun important — Hinglish mein",
+  "tags": ["${exam}"]
+}]
+
+Rules: EVERY field Hinglish. category: National/International/Economy/Science & Tech/Sports/Environment/Awards/Defence/Health`;
+
+    const buildEnglishPrompt = (
+      headlines
+    ) => `Today is ${today}. Generate current affairs for ${exam} exam students in India.
+
+Headlines:
+${headlines
+  .map(
+    (n, i) =>
+      `${i + 1}. ${n.title}${n.snippet ? ` — ${n.snippet}` : ""} [${
+        n.source || ""
+      }]`
+  )
+  .join("\n")}
+
+⚠️ SUMMARY RULES — STRICTLY FOLLOW:
+- summary MUST be 5-6 full sentences, MINIMUM 120 words
+- Include: what happened, when, who was involved, why it matters, what happens next
+- Include specific facts: numbers, dates, names, places, percentages, amounts
+- BAD summary (REJECTED): "The RBI held repo rate. This is important for economy."
+- GOOD summary: "The Reserve Bank of India's Monetary Policy Committee, led by Governor Sanjay Malhotra, unanimously voted to hold the repo rate at 6.25% for the third consecutive time in its April 2025 meeting. The decision was driven by persistent inflation hovering around 4.9%, above the RBI's 4% target. India's GDP growth projection for FY2026 was revised to 6.7%, slightly lower than the earlier forecast of 6.9%. The MPC maintained its 'withdrawal of accommodation' stance to ensure liquidity remains in check. Analysts expect a rate cut only if CPI inflation drops below 4.5% in the coming months, potentially in the June or August policy review."
+
+Pick 30-35 most exam-relevant items, spread across all 9 categories. Return ONLY a raw JSON array — no markdown, no backticks:
+[{
+  "id": "ca_1",
+  "category": "National",
+  "headline": "specific headline max 12 words",
+  "summary": "5-6 sentences with real facts, numbers, names, dates — MINIMUM 120 words",
+  "importance": "high",
+  "examRelevance": "2-3 sentences on which exam topic this covers, which paper, why frequently asked",
+  "tags": ["${exam}", "topic"]
+}]
+
+Rules:
+- summary: MINIMUM 120 words, 5-6 sentences, specific facts only — no vague statements
+- examRelevance: mention specific subject, paper number, and exam angle
+- importance: "high" for top 10-15 items, "medium" for rest
+- category: exactly one of: National, International, Economy, Science & Tech, Sports, Environment, Awards, Defence, Health
+- Spread evenly across all 9 categories`;
+
+    let raw = null;
+    if (isHinglish) {
+      raw = await callGeminiForHinglish(unique, buildHinglishPrompt);
+      if (!raw) {
+        raw = await callGroqWithFallback(
+          buildHinglishPrompt(unique.slice(0, 25), 15),
+          true
+        );
+      }
+    } else {
+      raw = await callGroqWithFallback(
+        buildEnglishPrompt(unique.slice(0, 50)),
+        true
+      );
+    }
+
+    if (!raw) throw new Error("No AI response");
+
+    const start = raw.indexOf("[");
+    const end = raw.lastIndexOf("]");
+    if (start === -1 || end === -1)
+      throw new Error("No JSON array in response");
+
+    const affairs = JSON.parse(raw.slice(start, end + 1));
+    if (!Array.isArray(affairs) || affairs.length < 10)
+      throw new Error(`Too few: ${affairs?.length}`);
+
+    await db.collection("current_affairs").updateOne(
+      { date: today, exam, lang },
+      {
+        $set: {
+          date: today,
+          exam,
+          lang,
+          affairs,
+          generatedAt: new Date(),
+          sourceCount: unique.length,
+        },
+      },
+      { upsert: true }
+    );
+
+    console.log(`[CRON] ✅ Saved ${affairs.length} items — ${exam} | ${lang}`);
+  } catch (err) {
+    console.error(`[CRON] ❌ Failed ${exam} | ${lang}:`, err.message);
+  } finally {
+    caGenerating.delete(cacheKey);
+  }
+};
+
+// Pre-generate all exams sequentially to avoid hammering APIs
+// Runs at 6:00 AM IST (00:30 UTC) every day
+const runDailyPregeneration = async () => {
+  console.log(
+    "[CRON] 🌅 Daily pre-generation started —",
+    new Date().toISOString()
+  );
+  const combos = ALL_EXAMS.flatMap((exam) =>
+    ALL_LANGS.map((lang) => ({ exam, lang }))
+  );
+  for (const { exam, lang } of combos) {
+    await pregenerateCA(exam, lang);
+    await new Promise((r) => setTimeout(r, 15000)); // 15s gap between each combo
+  }
+  console.log("[CRON] ✅ Daily pre-generation complete");
+};
+
 connectDB().then(() => {
-  runJobFetcher(getJobs);
-  startJobCron(getJobs);
+  runJobFetcher(getJobs, getUsers);
+  startJobCron(getJobs, getUsers);
+
+  // Run daily at 6:00 AM IST = 00:30 UTC
+  cron.schedule("30 0 * * *", runDailyPregeneration, { timezone: "UTC" });
+  console.log("✅ Current affairs cron scheduled — 6:00 AM IST daily");
+
+  // Delay CA startup by 3 mins so Adzuna job fetching finishes first
+  // Adzuna runs 90 calls which takes ~2 mins — running both together causes Gemini RPM spikes
+  setTimeout(async () => {
+    const today = new Date().toISOString().split("T")[0];
+    const sample = await db
+      .collection("current_affairs")
+      .findOne({ date: today, lang: "english" });
+    if (!sample) {
+      console.log(
+        "[CRON] No data for today — starting CA pre-generation in 3 mins..."
+      );
+      setTimeout(() => {
+        console.log("[CRON] 🌅 Starting delayed CA pre-generation now...");
+        runDailyPregeneration();
+      }, 3 * 60 * 1000); // 3 minutes
+    } else {
+      console.log("[CRON] Today's CA data already exists in DB ✅");
+    }
+  }, 5000);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -196,7 +460,6 @@ const saveMemory = async (userId, conversation, exam) => {
   if (!userId || !conversation?.length) return;
   try {
     const existing = await loadMemory(userId);
-
     const extractPrompt = `
 You are a memory extraction system for an exam prep app.
 Analyze this conversation and extract key facts about the student.
@@ -223,12 +486,10 @@ Rules:
 - Return ONLY a valid JSON array of strings, nothing else
 - Example: ["Preparing for UPSC 2026", "Weak in Economy", "Prefers Hindi"]
 `;
-
     const raw = await callGroqForMemory(extractPrompt);
     if (!raw) return;
     const cleaned = raw.replace(/```json|```/g, "").trim();
     const facts = JSON.parse(cleaned);
-
     if (Array.isArray(facts) && facts.length) {
       await getMemories().updateOne(
         { userId },
@@ -254,21 +515,17 @@ const mergeGuestMemory = async (anonId, realUserId) => {
   try {
     const guestDoc = await getMemories().findOne({ userId: anonId });
     if (!guestDoc?.facts?.length) return;
-
     const realDoc = await getMemories().findOne({ userId: realUserId });
     const existingFacts = realDoc?.facts || [];
-
     const merged = [
       ...existingFacts,
       ...guestDoc.facts.filter((f) => !existingFacts.includes(f)),
     ].slice(0, 10);
-
     await getMemories().updateOne(
       { userId: realUserId },
       { $set: { facts: merged, updatedAt: new Date(), isAnon: false } },
       { upsert: true }
     );
-
     await getMemories().deleteOne({ userId: anonId });
     console.log(`✅ Guest memory merged: ${anonId} → ${realUserId}`);
   } catch (err) {
@@ -276,7 +533,6 @@ const mergeGuestMemory = async (anonId, realUserId) => {
   }
 };
 
-// Add this helper in server.js
 const callGroqForMemory = async (prompt) => {
   const response = await fetch(
     "https://api.groq.com/openai/v1/chat/completions",
@@ -297,7 +553,8 @@ const callGroqForMemory = async (prompt) => {
   const data = await response.json();
   return data.choices?.[0]?.message?.content?.trim();
 };
-// ── GROQ AGENT ROUTER (saves Gemini quota) ────────────────────────────────────
+
+// ── GROQ AGENT ROUTER ─────────────────────────────────────────────────────────
 const askAIAgentGroq = async (question) => {
   try {
     const prompt = `You are a routing agent for an exam prep app.
@@ -321,14 +578,12 @@ Reply with just the single word, nothing else.`;
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.1,
-          max_tokens: 10, // only needs one word
+          max_tokens: 10,
         }),
       }
     );
-
     const data = await response.json();
     const answer = data.choices?.[0]?.message?.content?.trim().toLowerCase();
-
     if (answer?.includes("web_search"))
       return { action: "web_search", query: question };
     return { action: "direct" };
@@ -337,6 +592,7 @@ Reply with just the single word, nothing else.`;
     return { action: "direct" };
   }
 };
+
 // ── Mobile config ─────────────────────────────────────────────────────────────
 app.get("/mobile/config", (req, res) => {
   res.json({
@@ -420,10 +676,9 @@ const fetchWorldBankData = async (countryCode, indicator) => {
 
 // ── AI engine helpers ─────────────────────────────────────────────────────────
 const GROQ_MODELS = [
-  { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 3000 },
-  { id: "llama-3.3-70b-versatile", maxTokens: 4096 },
+  { id: "meta-llama/llama-4-scout-17b-16e-instruct", maxTokens: 8000 },
+  { id: "llama-3.3-70b-versatile", maxTokens: 8000 },
 ];
-
 const CONTEXT_EXTRA_TOKENS = 2000;
 const userQuizCounts = new Map();
 const USER_HOURLY_LIMIT = 15;
@@ -501,6 +756,129 @@ const generateAIContent = async (prompt, hasContext = false) => {
   const gptResult = await callGPT52(prompt, hasContext);
   if (gptResult) return gptResult;
   return callGroqWithFallback(prompt, hasContext);
+};
+
+// ── Gemini for Hinglish (better Indian language understanding) ────────────────
+// ── Gemini key rotation (3 keys = 45 RPM total) ──────────────────────────────
+const GEMINI_KEYS = [
+  process.env.GEMINI_API_KEY_1,
+  process.env.GEMINI_API_KEY_2,
+  process.env.GEMINI_API_KEY_3,
+  process.env.GEMINI_API_KEY, // fallback if old single-key setup
+].filter(Boolean);
+
+let geminiKeyIndex = 0;
+const getNextGeminiKey = () => {
+  const key = GEMINI_KEYS[geminiKeyIndex % GEMINI_KEYS.length];
+  geminiKeyIndex++;
+  return key;
+};
+
+// Single Gemini call with key rotation + retry on 429
+const callGeminiOnce = async (prompt, maxOutputTokens = 4000) => {
+  for (let attempt = 0; attempt < GEMINI_KEYS.length; attempt++) {
+    const key = getNextGeminiKey();
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens },
+          }),
+        }
+      );
+      if (response.status === 429) {
+        console.warn(
+          `⚠️ Gemini key ${attempt + 1} rate limited, trying next...`
+        );
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      if (!response.ok) {
+        console.warn(`⚠️ Gemini key ${attempt + 1} HTTP ${response.status}`);
+        continue;
+      }
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (text) return text;
+    } catch (err) {
+      console.warn(`⚠️ Gemini key ${attempt + 1} error:`, err.message);
+    }
+  }
+  return null;
+};
+
+// Sequential Gemini batches — 4 calls, 3s apart, different key each time
+// Sequential (not parallel) avoids hammering all keys at once → no rate limit
+// Each batch: ~25 headlines → 8-10 items → total 32-40 rich Hinglish items
+const callGeminiForHinglish = async (headlines, buildPromptFn) => {
+  if (!GEMINI_KEYS.length) {
+    console.warn("⚠️ No Gemini keys set");
+    return null;
+  }
+
+  const batchSize = Math.ceil(headlines.length / 4);
+  const batches = [
+    headlines.slice(0, batchSize),
+    headlines.slice(batchSize, batchSize * 2),
+    headlines.slice(batchSize * 2, batchSize * 3),
+    headlines.slice(batchSize * 3),
+  ].filter((b) => b.length > 0);
+
+  console.log(
+    `[CA] Gemini: ${batches.length} sequential batches of ~${batchSize} headlines, 8s apart`
+  );
+
+  const parse = (raw) => {
+    if (!raw) return [];
+    try {
+      const start = raw.indexOf("[");
+      const end = raw.lastIndexOf("]");
+      if (start === -1 || end === -1) return [];
+      return JSON.parse(raw.slice(start, end + 1));
+    } catch (e) {
+      console.warn("⚠️ Gemini batch JSON parse failed:", e.message);
+      return [];
+    }
+  };
+
+  const merged = [];
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    console.log(
+      `[CA] Gemini batch ${i + 1}/${batches.length} (${
+        batch.length
+      } headlines)...`
+    );
+
+    const result = await callGeminiOnce(buildPromptFn(batch, 8), 6000);
+    const items = parse(result);
+    console.log(`[CA] Batch ${i + 1} → ${items.length} items`);
+    merged.push(...items);
+
+    // Wait 8s between batches — Adzuna runs in parallel and can cause RPM spikes
+    // 4 batches × 8s = 32s total, safely under 1 req per 4s per key
+    if (i < batches.length - 1) {
+      await new Promise((r) => setTimeout(r, 8000));
+    }
+  }
+
+  if (merged.length === 0) {
+    console.warn("⚠️ All Gemini batches returned empty");
+    return null;
+  }
+
+  merged.forEach((item, i) => {
+    item.id = `ca_${i + 1}`;
+  });
+  console.log(
+    `✅ Gemini total: ${merged.length} Hinglish items from ${batches.length} batches`
+  );
+  return JSON.stringify(merged);
 };
 
 const extractJSONArray = (text) => {
@@ -830,14 +1208,10 @@ app.post("/chats/:userId", async (req, res) => {
 // ── Chat ──────────────────────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
   const { question, exam, history = [], userId, chatId, anonId } = req.body;
-
   if (!question) return res.status(400).json({ error: "Question is required" });
 
   try {
-    // 1. Resolve identity — real user or guest
     const resolvedUserId = userId || anonId || null;
-
-    // 2. Load memory for this user
     const memory = await loadMemory(resolvedUserId);
 
     let finalPrompt = question;
@@ -862,10 +1236,8 @@ app.post("/chat", async (req, res) => {
       if (wb) finalPrompt = `${wb}\n\nQuestion: ${question}`;
     }
 
-    // 3. Pass memory into askAI
     const answer = await askAI(finalPrompt, exam, history, false, memory);
 
-    // 4. Save chat to DB (logged-in users only)
     if (chatId && (userId || anonId)) {
       await getChats().updateOne(
         { _id: new ObjectId(chatId), userId: userId || anonId },
@@ -883,7 +1255,6 @@ app.post("/chat", async (req, res) => {
       );
     }
 
-    // 5. Save memory in background — fire & forget, doesn't slow response
     if (resolvedUserId) {
       const updatedHistory = [
         ...history,
@@ -928,7 +1299,6 @@ app.get("/user/:userId", async (req, res) => {
   }
 });
 
-// ── Save FCM token ────────────────────────────────────────────────────────────
 app.post("/user/fcm-token", async (req, res) => {
   const { userId, token } = req.body;
   if (!userId || !token)
@@ -945,8 +1315,6 @@ app.post("/user/fcm-token", async (req, res) => {
   }
 });
 
-// ── Merge guest memory on login/signup ────────────────────────────────────────
-// Call this from your auth flow when a guest signs up or logs in
 app.post("/user/merge-memory", async (req, res) => {
   const { anonId, userId } = req.body;
   if (!anonId || !userId)
@@ -962,35 +1330,26 @@ app.post("/user/merge-memory", async (req, res) => {
 // ── Quiz ──────────────────────────────────────────────────────────────────────
 app.post("/quiz/generate", async (req, res) => {
   const { topic, exam = "General", count = 10, userId, state } = req.body;
-
   if (!checkUserRateLimit(userId))
     return res.status(429).json({ error: "Limit reached" });
-
   if (!topic) return res.status(400).json({ error: "Topic required" });
 
   const safeCount = Math.min(Number(count) || 10, 20);
   const finalTopic =
     exam === "State PCS" && state ? `${state} — ${topic}` : topic;
 
-  // ── 1. Find quizzes on this topic/exam this user hasn't solved yet ──────
   if (userId) {
     const solvedResults = await getQuizResults()
       .find({ userId, exam, topic: finalTopic, quizId: { $ne: null } })
       .project({ quizId: 1 })
       .toArray();
-
     const solvedIds = solvedResults.map((r) => r.quizId).filter(Boolean);
-
     const existingQuiz = await getQuizzes().findOne({
       topic: finalTopic,
       exam,
-      // Exclude quizzes this user already solved
       ...(solvedIds.length ? { _id: { $nin: solvedIds } } : {}),
-      // Only reuse quizzes solved by at least 1 other user (they're "validated")
-      // OR any quiz if there's nothing solved yet
       createdAt: { $exists: true },
     });
-
     if (existingQuiz) {
       console.log(`♻️ Serving pooled quiz ${existingQuiz._id} to ${userId}`);
       return res.json({
@@ -1002,7 +1361,6 @@ app.post("/quiz/generate", async (req, res) => {
     }
   }
 
-  // ── 2. No suitable pooled quiz — generate a new one ────────────────────
   const contextBlock =
     exam === "Current Affairs"
       ? await fetchLiveSearchContext(
@@ -1017,16 +1375,13 @@ app.post("/quiz/generate", async (req, res) => {
     const questions = extractJSONArray(
       content.replace(/```json|```/gi, "").trim()
     );
-
     const quizDoc = {
       topic: finalTopic,
       exam,
       questions,
       createdAt: new Date(),
     };
-
     const result = await getQuizzes().insertOne(quizDoc);
-
     res.json({
       quizId: result.insertedId,
       questions,
@@ -1038,6 +1393,7 @@ app.post("/quiz/generate", async (req, res) => {
     res.status(500).json({ error: "Quiz failed" });
   }
 });
+
 app.post("/quiz/result", async (req, res) => {
   const { userId, topic, exam, score, total, timeTaken, quizId } = req.body;
   if (!userId) return res.status(400).json({ error: "userId required" });
@@ -1050,7 +1406,7 @@ app.post("/quiz/result", async (req, res) => {
       total,
       percentage: Math.round((score / total) * 100),
       timeTaken,
-      quizId: quizId ? new ObjectId(quizId) : null, // ← track which shared quiz
+      quizId: quizId ? new ObjectId(quizId) : null,
       createdAt: new Date(),
     });
     res.json({ success: true });
@@ -1072,20 +1428,25 @@ app.get("/quiz/history/:userId", async (req, res) => {
   }
 });
 
-// ── Current affairs ───────────────────────────────────────────────────────────
+// ── In-progress lock to prevent simultaneous generation ──────────────────────
+const caGenerating = new Set();
 
+// ── Current affairs ───────────────────────────────────────────────────────────
 app.get("/current-affairs/:exam", async (req, res) => {
   const { exam } = req.params;
   const lang = req.query.lang === "hinglish" ? "hinglish" : "english";
   const today = new Date().toISOString().split("T")[0];
+  const cacheKey = `${exam}|${lang}|${today}`;
 
   try {
-    // ── 1. Check cache (exam + date + lang) ───────────────────────────────
+    // ── 1. Try today's data from DB ───────────────────────────────────────
     const cached = await db
       .collection("current_affairs")
       .findOne({ date: today, exam, lang });
-    if (cached?.affairs?.length >= 20) {
-      console.log(`[CA] Cache hit: ${exam} | ${lang} | ${today}`);
+    if (cached?.affairs?.length >= 10) {
+      console.log(
+        `[CA] ✅ DB hit: ${exam} | ${lang} | ${today} (${cached.affairs.length} items)`
+      );
       return res.json({
         date: today,
         exam,
@@ -1095,157 +1456,33 @@ app.get("/current-affairs/:exam", async (req, res) => {
       });
     }
 
-    console.log(`[CA] Generating: ${exam} | ${lang} | ${today}`);
-
-    // ── 2. Parallel Serper fetches ────────────────────────────────────────
-    const queries = [
-      `India government policy news today ${today}`,
-      `India current affairs ${exam} exam ${today}`,
-      `India economy RBI budget markets news today`,
-      `India international relations diplomacy today`,
-      `India science technology ISRO space news today`,
-      `India sports cricket achievements news today`,
-      `India environment climate wildlife news today`,
-      `India defence military border news today`,
-      `India health ministry news today`,
-      `India awards appointments news today`,
-    ];
-
-    const newsResults = [];
-    await Promise.allSettled(
-      queries.map(async (q) => {
-        try {
-          const r = await fetch("https://google.serper.dev/news", {
-            method: "POST",
-            headers: {
-              "X-API-KEY": process.env.SERPER_API_KEY,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ q, num: 10, gl: "in", hl: "en" }),
+    // ── 2. Cron is generating — poll DB for up to 90s ─────────────────────
+    if (caGenerating.has(cacheKey)) {
+      console.log(`[CA] Cron generating ${cacheKey} — polling...`);
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const poll = await db
+          .collection("current_affairs")
+          .findOne({ date: today, exam, lang });
+        if (poll?.affairs?.length >= 10) {
+          console.log(`[CA] Poll hit after ${(i + 1) * 3}s`);
+          return res.json({
+            date: today,
+            exam,
+            lang,
+            affairs: poll.affairs,
+            cached: true,
           });
-          const data = await r.json();
-          if (data.news?.length) newsResults.push(...data.news);
-        } catch (e) {
-          console.warn(`[CA] Serper failed: "${q}"`, e.message);
         }
-      })
-    );
-
-    // Deduplicate by title
-    const seen = new Set();
-    const unique = newsResults.filter((n) => {
-      if (!n.title || seen.has(n.title)) return false;
-      seen.add(n.title);
-      return true;
-    });
-
-    console.log(`[CA] ${unique.length} unique headlines from Serper`);
-    if (unique.length < 5) throw new Error("Not enough Serper results");
-
-    // ── 3. Language instruction ───────────────────────────────────────────
-    const langInstruction =
-      lang === "hinglish"
-        ? `Sab kuch Hinglish mein likho — Hindi words Roman script mein likhna.
-         Style: ek young Indian dost jo news explain kar raha ho, casual but informative.
-         Example headline: "RBI ne repo rate 6.25% pe hold kiya, teesri baar!"
-         Example summary: "Aaj cabinet ne ek bada faisla liya — 1,400 naye projects
-         roads aur railways ke liye approve hue. Tier-2 cities ko sabse zyada faayda hoga."
-         Example examRelevance: "Yeh topic Economy aur Fiscal Policy ke liye important hai —
-         UPSC aur SSC mein government schemes frequently pooche jaate hain."
-         Rules:
-         - Proper nouns English mein: RBI, ISRO, GDP, Modi, India, Pakistan
-         - Numbers hamesha numerals mein: 1,300 (not "ek hazar teen sau")
-         - Headline max 12 words, punchy aur direct
-         - Summary 2-3 sentences only
-         - examRelevance bhi Hinglish mein likho`
-        : `Write everything in clear, simple English.
-         Style: professional news anchor — factual, concise, no fluff.
-         Headline: max 12 words, specific and informative.
-         Summary: 2-3 sentences — what happened, key facts, why it matters.
-         examRelevance: which subject/topic this relates to for ${exam} exam preparation.`;
-
-    // ── 4. Single Groq call — summarize + language in one shot ───────────
-    const prompt = `Today is ${today}. Here are Google News headlines for ${exam} exam students in India:
-
-${unique
-  .map(
-    (n, i) =>
-      `${i + 1}. ${n.title}${n.snippet ? ` — ${n.snippet}` : ""} [${
-        n.source || ""
-      }]`
-  )
-  .join("\n")}
-
-LANGUAGE INSTRUCTION:
-${langInstruction}
-
-Pick the 40-50 most exam-relevant items from the list above.
-Return ONLY a raw JSON array — no markdown, no backticks, no explanation before or after.
-
-[
-  {
-    "id": "ca_1",
-    "category": "National",
-    "headline": "...",
-    "summary": "...",
-    "importance": "high",
-    "examRelevance": "...",
-    "tags": ["${exam}", "relevant topic"]
-  }
-]
-
-Rules:
-- category must be exactly one of: National, International, Economy, Science & Tech, Sports, Environment, Awards, Defence, Health
-- importance: "high" for 15-20 most critical items, "medium" for the rest
-- Spread items across all 9 categories — do not skip any
-- Follow the language instruction strictly for ALL text fields`;
-
-    const raw = await callGroqWithFallback(prompt, true);
-    if (!raw) throw new Error("Groq returned empty response");
-
-    // Safe JSON extract
-    const start = raw.indexOf("[");
-    const end = raw.lastIndexOf("]");
-    if (start === -1 || end === -1)
-      throw new Error("No JSON array found in response");
-
-    const affairs = JSON.parse(raw.slice(start, end + 1));
-    if (!Array.isArray(affairs) || affairs.length < 10) {
-      throw new Error(`Too few items returned: ${affairs?.length}`);
+      }
     }
 
-    // ── 5. Cache result ───────────────────────────────────────────────────
-    await db.collection("current_affairs").updateOne(
-      { date: today, exam, lang },
-      {
-        $set: {
-          date: today,
-          exam,
-          lang,
-          affairs,
-          generatedAt: new Date(),
-          sourceCount: unique.length,
-        },
-      },
-      { upsert: true }
-    );
-
-    console.log(
-      `[CA] ✅ ${affairs.length} items saved — ${exam} | ${lang} | ${today}`
-    );
-    res.json({ date: today, exam, lang, affairs });
-  } catch (err) {
-    console.error("[CA] ❌", err.message);
-
-    // Fallback: return stale cache rather than blank screen
+    // ── 3. No data yet — serve yesterday's data with stale flag ──────────
     const stale = await db
       .collection("current_affairs")
       .findOne({ exam, lang }, { sort: { date: -1 } });
-
     if (stale?.affairs?.length) {
-      console.log(
-        `[CA] Stale cache fallback: ${exam} | ${lang} | ${stale.date}`
-      );
+      console.log(`[CA] Serving stale: ${exam} | ${lang} | ${stale.date}`);
       return res.json({
         date: stale.date,
         exam,
@@ -1256,9 +1493,172 @@ Rules:
       });
     }
 
+    // ── 4. Absolutely nothing in DB — trigger on-demand for this combo ────
+    console.log(
+      `[CA] No data at all for ${exam} | ${lang} — triggering on-demand generation`
+    );
+    pregenerateCA(exam, lang); // fire and forget
     res
-      .status(500)
-      .json({ error: "Failed to fetch current affairs", details: err.message });
+      .status(202)
+      .json({ error: "Generating fresh content, please retry in 30 seconds" });
+  } catch (err) {
+    console.error("[CA] ❌", err.message);
+    res.status(500).json({ error: "Failed to fetch current affairs" });
+  }
+});
+
+// ── Flashcards ────────────────────────────────────────────────────────────────
+app.get("/flashcards/:userId", async (req, res) => {
+  try {
+    const cards = await getFlashcards()
+      .find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(cards);
+  } catch {
+    res.status(500).json({ error: "Failed to load flashcards" });
+  }
+});
+
+app.post("/flashcards/generate", async (req, res) => {
+  const { topic, exam = "General", count = 10, userId } = req.body;
+  if (!topic || !userId)
+    return res.status(400).json({ error: "Topic and userId required" });
+  const safeCount = Math.min(Number(count) || 10, 20);
+  try {
+    let content = await generateAIContent(
+      getFlashcardPrompt(exam, topic, safeCount)
+    );
+    if (!content) throw new Error("AI failed");
+    content = content
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    const rawCards = extractJSONArray(content);
+    const cards = rawCards.map((c) => ({
+      ...c,
+      userId,
+      interval: 0,
+      lastReviewed: null,
+      createdAt: new Date(),
+    }));
+    if (cards.length > 0) await getFlashcards().insertMany(cards);
+    res.json({ cards });
+  } catch (err) {
+    console.error("Flashcard error:", err.message);
+    res.status(500).json({ error: "Failed to generate flashcards" });
+  }
+});
+
+app.post("/flashcards/review", async (req, res) => {
+  const { cardId, difficulty } = req.body;
+  const inc = { EASY: 7, GOOD: 3, HARD: 1 }[difficulty] || 1;
+  try {
+    await getFlashcards().updateOne(
+      { _id: new ObjectId(cardId) },
+      { $set: { lastReviewed: new Date() }, $inc: { interval: inc } }
+    );
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "Failed to update review" });
+  }
+});
+
+// ── Study planner ─────────────────────────────────────────────────────────────
+app.post("/planner/generate", async (req, res) => {
+  const { exam, examDate, hoursPerDay = 4, userId } = req.body;
+  if (!exam || !examDate)
+    return res.status(400).json({ error: "exam and examDate required" });
+  const daysLeft = Math.max(
+    1,
+    Math.ceil((new Date(examDate) - new Date()) / 86400000)
+  );
+  const planDays = Math.min(daysLeft, 30);
+  const prompt = `Create a ${planDays}-day study plan for ${exam} exam on ${examDate}. Study time: ${hoursPerDay} hours/day. Return ONLY valid JSON.`;
+  try {
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.4,
+          max_tokens: 8000,
+        }),
+      }
+    );
+    const data = await response.json();
+    const plan = JSON.parse(
+      data.choices?.[0]?.message?.content?.trim().replace(/```json|```/g, "")
+    );
+    if (userId) {
+      const existing = await getPlanners().findOne({ userId, exam });
+      if (existing) {
+        await getPlanners().updateOne(
+          { _id: existing._id },
+          { $set: { ...plan, userId, updatedAt: new Date() } }
+        );
+        plan._id = existing._id;
+      } else {
+        const result = await getPlanners().insertOne({
+          ...plan,
+          userId,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        plan._id = result.insertedId;
+      }
+    }
+    res.json({ plan });
+  } catch {
+    res.status(500).json({ error: "Planner failed" });
+  }
+});
+
+app.get("/planner/:userId", async (req, res) => {
+  try {
+    const planners = await getPlanners()
+      .find({ userId: req.params.userId })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    res.json(planners);
+  } catch {
+    res.status(500).json({ error: "Failed to load planners" });
+  }
+});
+
+app.patch("/planner/:plannerId/day/:dayIndex", async (req, res) => {
+  const { completed } = req.body;
+  try {
+    await getPlanners().updateOne(
+      { _id: new ObjectId(req.params.plannerId) },
+      {
+        $set: {
+          [`days.${req.params.dayIndex}.completed`]: completed,
+          updatedAt: new Date(),
+        },
+      }
+    );
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "Failed update" });
+  }
+});
+
+app.delete("/planner/:userId/:plannerId", async (req, res) => {
+  try {
+    await getPlanners().deleteOne({
+      _id: new ObjectId(req.params.plannerId),
+      userId: req.params.userId,
+    });
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "Delete failed" });
   }
 });
 
@@ -1389,17 +1789,12 @@ Return ONLY a valid JSON object in exactly this format — no markdown, no expla
   "type": "bar" | "line" | "pie" | "doughnut",
   "title": "Chart title here",
   "labels": ["Label1", "Label2", "Label3"],
-  "datasets": [
-    {
-      "label": "Dataset name",
-      "data": [10, 20, 30]
-    }
-  ],
+  "datasets": [{ "label": "Dataset name", "data": [10, 20, 30] }],
   "insight": "One line key insight from this data for exam preparation"
 }
 
 Rules:
-- Pick the best chart type for the data (pie for proportions, line for trends, bar for comparisons)
+- Pick the best chart type (pie for proportions, line for trends, bar for comparisons)
 - Use real, accurate data relevant to India and the ${exam} exam
 - Max 8 data points for readability
 - Return ONLY the JSON object, nothing else`;
@@ -1421,20 +1816,14 @@ Rules:
         }),
       }
     );
-
     if (!response.ok) throw new Error(`Groq error: ${response.status}`);
-
     const data = await response.json();
     const raw = data.choices?.[0]?.message?.content;
     if (!raw) throw new Error("Empty response");
-
     const cleaned = raw.replace(/```json|```/g, "").trim();
-
-    // ✅ Safe parse — extract JSON object even if extra text slips through
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start === -1 || end === -1) throw new Error("No JSON found");
-
     const parsed = JSON.parse(cleaned.slice(start, end + 1));
     res.json(parsed);
   } catch (err) {
@@ -1442,6 +1831,7 @@ Rules:
     res.status(500).json({ error: "Chart generation failed" });
   }
 });
+
 // ── Data deletion ─────────────────────────────────────────────────────────────
 app.delete("/user/:userId/delete-data", async (req, res) => {
   const { userId } = req.params;
@@ -1453,7 +1843,7 @@ app.delete("/user/:userId/delete-data", async (req, res) => {
       getPlanners().deleteMany({ userId }),
       getFlashcards().deleteMany({ userId }),
       getResumes().deleteMany({ userId }),
-      getMemories().deleteMany({ userId }), // 👈 also delete memories
+      getMemories().deleteMany({ userId }),
     ]);
     res.json({ success: true, message: "All user data deleted successfully." });
   } catch {

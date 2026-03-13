@@ -57,22 +57,6 @@ export default function createJobRouter(getJobs) {
   });
 
   // ── POST /jobs/subscribe ──────────────────────────────────────────────────
-  router.post("/subscribe", (req, res) => {
-    const { exam } = req.body;
-    if (!exam) return res.status(400).json({ error: "exam required" });
-
-    const topic =
-      "jobs_" +
-      exam
-        .toLowerCase()
-        .replace(/\s+/g, "_")
-        .replace(/[^a-z0-9_]/g, "");
-
-    res.json({
-      topic,
-      message: `Subscribe your device to FCM topic: ${topic}`,
-    });
-  });
 
   // ── GET /jobs/:id ─────────────────────────────────────────────────────────
   router.get("/:id", async (req, res) => {
