@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output (this is where your API key was exposed!)
+dist/
+build/
+
+# Environment variables (NEVER commit these)
+.env
+.env.local
+.env.development
+.env.production
+.env.staging
+
+# Capacitor (Android/iOS builds)
+android/
+ios/
+.capacitor/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Cache
+.cache/
+.parcel-cache/
