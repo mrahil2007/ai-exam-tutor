@@ -23,6 +23,7 @@ import { firebaseAuth } from "./firebase";
 
 // ── Misc pages ────────────────────────────────────────────────────────────────
 import DeleteAccount from "./pages/DeleteAccount";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 
 // ── User ID (guest) ───────────────────────────────────────────────────────────
 const getAnonId = () => {
@@ -37,6 +38,7 @@ const GUEST_USER_ID = getAnonId();
 
 export default function App() {
   if (window.location.pathname === "/delete-account") return <DeleteAccount />;
+  if (window.location.pathname === "/privacy-policy") return <PrivacyPolicy />;
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5050";
 
@@ -160,11 +162,7 @@ export default function App() {
     >
       <style>{GLOBAL_STYLES}</style>
 
-      {/* ── TOP BAR ─────────────────────────────────────────────────────────
-          3-column layout: [left spacer] [center logo] [right controls]
-          The left spacer mirrors the right controls width so the logo
-          stays truly centered without overlapping anything.
-      ── */}
+      {/* ── TOP BAR ── */}
       <div
         style={{
           display: "flex",
@@ -174,7 +172,7 @@ export default function App() {
           minHeight: 40,
         }}
       >
-        {/* Left — invisible spacer that matches right side width */}
+        {/* Left — invisible spacer */}
         <div style={{ flex: 1 }} />
 
         {/* Center — ExamAI logo */}
@@ -370,6 +368,27 @@ export default function App() {
         {activeTab === "resume" && (
           <ResumeScreen API_URL={API_URL} userId={userId} />
         )}
+      </div>
+
+      {/* ── PRIVACY LINK ── */}
+      <div
+        style={{
+          textAlign: "center",
+          padding: "4px 0",
+          flexShrink: 0,
+        }}
+      >
+        <a
+          href="/privacy-policy"
+          style={{
+            color: G.muted,
+            fontSize: "0.65rem",
+            textDecoration: "none",
+            opacity: 0.6,
+          }}
+        >
+          Privacy Policy
+        </a>
       </div>
 
       {/* ── BOTTOM TAB BAR ── */}
